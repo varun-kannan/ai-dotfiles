@@ -1,0 +1,183 @@
+#!/usr/bin/env python3
+"""check-deps - flag imports that are not declared in the project's manifests.
+
+Catches the hallucinated-package failure mode: a model imports a plausibly named
+library that does not exist, or that exists but was never added as a dependency.
+Attackers register those names (slopsquatting), so an unresolved import is a
+supply-chain question, not a style question.
+
+Usage:  check-deps FILE [FILE ...] [--root DIR]
+
+Advisory only - always exits 0. False positives are expected for monorepo path
+aliases, namespace packages, and transitive imports. Treat output as "verify
+these", not "these are wrong".
+"""
+import argparse
+import json
+import os
+import re
+import sys
+
+PY_STDLIB = set("""
+abc aifc argparse array ast asyncio base64 bdb binascii bisect builtins bz2
+calendar cgi cmath cmd codecs collections colorsys concurrent configparser
+contextlib contextvars copy copyreg csv ctypes curses dataclasses datetime dbm
+decimal difflib dis doctest email encodings enum errno faulthandler fcntl filecmp
+fileinput fnmatch fractions ftplib functools gc getopt getpass gettext glob grp
+gzip hashlib heapq hmac html http imaplib importlib inspect io ipaddress
+itertools json keyword linecache locale logging lzma mailbox marshal math
+mimetypes mmap multiprocessing netrc numbers operator os pathlib pdb pickle
+pickletools pipes pkgutil platform plistlib poplib posixpath pprint profile pty
+pwd py_compile queue quopri random re readline reprlib resource runpy sched
+secrets select selectors shelve shlex shutil signal site smtplib socket
+socketserver sqlite3 ssl stat statistics string stringprep struct subprocess
+symtable sys sysconfig tabnanny tarfile telnetlib tempfile termios textwrap
+threading time timeit tkinter token tokenize tomllib trace traceback
+tracemalloc tty turtle types typing unicodedata unittest urllib uuid venv
+warnings wave weakref webbrowser wsgiref xml xmlrpc zipapp zipfile zipimport
+zlib zoneinfo __future__
+""".split())
+
+NODE_BUILTIN = set("""
+assert async_hooks buffer child_process cluster console constants crypto dgram
+diagnostics_channel dns domain events fs http http2 https inspector module net
+os path perf_hooks process punycode querystring readline repl stream
+string_decoder sys timers tls trace_events tty url util v8 vm wasi worker_threads
+zlib
+""".split())
+
+PY_RE = [
+    re.compile(r"^\s*import\s+([A-Za-z_][\w.]*)", re.M),
+    re.compile(r"^\s*from\s+([A-Za-z_][\w.]*)\s+import", re.M),
+]
+JS_RE = [
+    re.compile(r"""^\s*import\s+(?:.*?\s+from\s+)?['"]([^'"]+)['"]""", re.M),
+    re.compile(r"""\brequire\(\s*['"]([^'"]+)['"]\s*\)"""),
+    re.compile(r"""\bimport\(\s*['"]([^'"]+)['"]\s*\)"""),
+]
+
+# Import name -> distribution name, where they differ commonly enough to matter.
+ALIAS = {
+    "yaml": "pyyaml", "cv2": "opencv-python", "PIL": "pillow", "sklearn": "scikit-learn",
+    "bs4": "beautifulsoup4", "dotenv": "python-dotenv", "jwt": "pyjwt",
+    "dateutil": "python-dateutil", "serial": "pyserial", "OpenSSL": "pyopenssl",
+    "attr": "attrs", "google": "protobuf", "psycopg2": "psycopg2-binary",
+}
+
+
+def norm(n):
+    return re.sub(r"[-_.]+", "-", n).lower()
+
+
+def find_root(start):
+    d = os.path.abspath(start if os.path.isdir(start) else os.path.dirname(start))
+    while True:
+        for m in ("package.json", "pyproject.toml", "requirements.txt", ".git", "go.mod"):
+            if os.path.exists(os.path.join(d, m)):
+                return d
+        p = os.path.dirname(d)
+        if p == d:
+            return None
+        d = p
+
+
+def declared(root):
+    """Collect declared dependency names from whatever manifests exist."""
+    js, py = set(), set()
+    pj = os.path.join(root, "package.json")
+    if os.path.exists(pj):
+        try:
+            with open(pj) as fh:
+                data = json.load(fh)
+            for k in ("dependencies", "devDependencies", "peerDependencies",
+                      "optionalDependencies"):
+                js.update(norm(x) for x in (data.get(k) or {}))
+        except (ValueError, IOError):
+            pass
+    for fn in os.listdir(root):
+        if fn.startswith("requirements") and fn.endswith(".txt"):
+            try:
+                with open(os.path.join(root, fn)) as fh:
+                    for ln in fh:
+                        ln = ln.split("#")[0].strip()
+                        if ln and not ln.startswith("-"):
+                            py.add(norm(re.split(r"[<>=!\[ ;]", ln)[0]))
+            except IOError:
+                pass
+    pt = os.path.join(root, "pyproject.toml")
+    if os.path.exists(pt):
+        try:
+            with open(pt) as fh:
+                for ln in fh:
+                    m = re.match(r"""\s*["']?([A-Za-z0-9_.-]+)["']?\s*[<>=~^"']""", ln)
+                    if m:
+                        py.add(norm(m.group(1)))
+        except IOError:
+            pass
+    return js, py
+
+
+def imports(path, text):
+    ext = os.path.splitext(path)[1].lower()
+    found = set()
+    if ext in (".py", ".pyi"):
+        for r in PY_RE:
+            for m in r.findall(text):
+                top = m.split(".")[0]
+                if top and top not in PY_STDLIB:
+                    found.add(("py", top))
+    elif ext in (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"):
+        for r in JS_RE:
+            for m in r.findall(text):
+                if m.startswith(".") or m.startswith("/") or m.startswith("#"):
+                    continue
+                m = m[5:] if m.startswith("node:") else m
+                if m in NODE_BUILTIN:
+                    continue
+                parts = m.split("/")
+                pkg = "/".join(parts[:2]) if m.startswith("@") else parts[0]
+                found.add(("js", pkg))
+    return found
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("files", nargs="+")
+    ap.add_argument("--root")
+    a = ap.parse_args()
+
+    unresolved = []
+    for p in a.files:
+        if not os.path.isfile(p):
+            continue
+        try:
+            with open(p, "rb") as fh:
+                text = fh.read().decode("utf-8")
+        except (IOError, UnicodeDecodeError):
+            continue
+        root = a.root or find_root(p)
+        if not root:
+            continue
+        js, py = declared(root)
+        if not js and not py:
+            continue
+        for lang, name in sorted(imports(p, text)):
+            if lang == "py":
+                cand = {norm(name), norm(ALIAS.get(name, name))}
+                if py and not (cand & py):
+                    unresolved.append((p, name, "PyPI", "pip index versions %s" % name))
+            else:
+                if js and norm(name) not in js:
+                    unresolved.append((p, name, "npm", "npm view %s version" % name))
+
+    for p, name, reg, cmd in unresolved:
+        print("verify  %s  imports %r - not declared in manifest (%s)\n        check: %s"
+              % (p, name, reg, cmd))
+    if unresolved:
+        print("\n%d unresolved import(s). Confirm each exists and is declared before "
+              "shipping. Unverifiable name -> do not import it." % len(unresolved))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

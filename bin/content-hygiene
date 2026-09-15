@@ -1,0 +1,303 @@
+#!/usr/bin/env python3
+"""content-hygiene - scan text for output-hygiene violations.
+
+Implements the mechanical parts of CLAUDE.md sections 11 (character hygiene),
+12 (no scaffolding) and 8 (comment/placeholder hygiene).
+
+Usage:
+    content-hygiene FILE [FILE ...]     scan files
+    content-hygiene --stdin [--name N]  scan stdin, N used for type detection
+    content-hygiene --self-test         run built-in tests
+
+Exit: 0 clean or warnings only, 1 hard violations found, 3 usage error.
+
+Opt out per file by putting the marker  hygiene:ignore-file  in the first 30
+lines. Reference material that quotes these characters on purpose needs it.
+"""
+import argparse
+import os
+import re
+import sys
+import unicodedata
+
+MARKER = "hygiene:ignore-file"
+
+# Codepoints that must never appear. Written as escapes so this file stays ASCII
+# and therefore passes its own check.
+INVISIBLE = {
+    "​": "ZERO WIDTH SPACE",
+    "‌": "ZERO WIDTH NON-JOINER",
+    "‍": "ZERO WIDTH JOINER",
+    "‎": "LEFT-TO-RIGHT MARK",
+    "‏": "RIGHT-TO-LEFT MARK",
+    "⁠": "WORD JOINER",
+    "﻿": "ZERO WIDTH NO-BREAK SPACE (BOM)",
+    "­": "SOFT HYPHEN",
+    " ": "LINE SEPARATOR",
+    " ": "PARAGRAPH SEPARATOR",
+    " ": "NARROW NO-BREAK SPACE",
+}
+NBSP = " "
+
+# Typographic characters: defects in source code, style issues in prose.
+TYPOGRAPHIC = {
+    "“": "LEFT DOUBLE QUOTATION MARK",
+    "”": "RIGHT DOUBLE QUOTATION MARK",
+    "‘": "LEFT SINGLE QUOTATION MARK",
+    "’": "RIGHT SINGLE QUOTATION MARK",
+    "—": "EM DASH",
+    "–": "EN DASH",
+    "…": "HORIZONTAL ELLIPSIS",
+    "·": "MIDDLE DOT",
+}
+
+PROSE_EXT = {".md", ".markdown", ".txt", ".rst", ".adoc", ".org"}
+BINARY_EXT = {".png", ".jpg", ".jpeg", ".gif", ".pdf", ".zip", ".woff", ".woff2",
+              ".ico", ".mp4", ".mp3", ".wav", ".so", ".dylib", ".class", ".pyc"}
+
+# Unfinished work shipped as if complete. These are bugs, not style.
+PLACEHOLDER = [
+    (r"(?i)\byour code here\b", "unfilled placeholder"),
+    (r"(?i)\b(implement|implementation) (goes )?here\b", "unfilled placeholder"),
+    (r"(?i)(//|#|--|/\*)\s*TODO:?\s*(implement|add (the )?(logic|code|error handling))\b",
+     "generic TODO with no named decision"),
+    (r"(?i)(//|#|--|/\*)\s*\.\.\.\s*(rest|remainder|remaining|existing|previous|other|same)\b",
+     "elided code - the file is incomplete"),
+    (r"(?i)(//|#|--)\s*\(?\s*(rest of|remainder of) (the )?(code|file|implementation|function)",
+     "elided code - the file is incomplete"),
+    (r"\[(Your Name|Your Company|Insert [A-Za-z ]{2,30}|Company Name|Date|XX+|LINK|URL)\]",
+     "unfilled template placeholder"),
+]
+
+# Any [Capitalised Words] left in prose is a template slot nobody filled, e.g. the
+# [Company] and [Name] a model leaves in a cold email. Excluded: markdown links
+# [text](url), reference links [text][1] and [text]: url, all-caps tags like [TOC],
+# single letters like [P], and anything inside backticks or fenced code.
+BRACKET_SLOT = re.compile(r"(?<![\w\]\)!])\[([A-Z][a-z]+(?: [A-Za-z][a-z]*){0,3})\](?![(\[:])")
+
+# Negation-reversal framing from section 10. Warning only: plenty of honest
+# sentences share the shape, so this flags for a second look, never blocks.
+_SUBJ = r"(it|this|that|they|these|those|we|you)"
+_BE = r"('re|'s| are| is| was| were)"
+NEGATION = [
+    (re.compile(r"(?i)\bnot (just|only|merely)\b"), "'not just X' framing"),
+    (re.compile(r"(?i)\b" + _SUBJ + r"\s*" + _BE + r"(n't| not)\s+([a-z]+)\b[^.!?;]{0,100}"
+                r"(?:[.!?;,]|--|—)\s*" + _SUBJ + r"\s*" + _BE + r"\s+\4\b"),
+     "negation-reversal ('it isn't X, it's Y')"),
+    # Any subject: "The reviews aren't there because X. They're there because Y."
+    (re.compile(r"(?i)\b(?:are|is|was|were)(?:n't| not)\s+(\w+(?:\s+\w+)?)\b[^.!?;]{0,120}"
+                r"(?:[.!?;,]|--|\u2014)\s*\w+(?:'re|'s| are| is| was| were)\s+\1\b"),
+     "negation-reversal ('X isn't A. X is A-but-better')"),
+]
+
+# Generation-process residue that must never reach a deliverable.
+SCAFFOLDING = [
+    (r"(?i)\bas an AI language model\b", "model self-reference"),
+    (r"(?i)\bas of my (last )?(knowledge|training) (update|cutoff)\b", "model self-reference"),
+    (r"(?i)\bI (cannot|can't) browse the internet\b", "model self-reference"),
+    (r":contentReference\[oaicite", "leaked citation object"),
+    (r"</?(thinking|antthinking)>", "leaked reasoning tag"),
+    (r"</?(function_calls|invoke|function_results)>", "leaked tool-call tag"),
+    (r"【\d+:\d+†[^】]*】", "leaked file-search citation"),
+    (r"(?i)^\s*(Certainly|Sure thing|Great question|Of course)[!,]", "conversational preamble"),
+    (r"(?i)^\s*(I hope this helps|Let me know if you)", "conversational trailer"),
+]
+
+# CLAUDE.md section 10 vocabulary. Warning-only, prose files only.
+VOCAB = """delve tapestry testament realm landscape journey embark navigate foster
+leverage harness unlock elevate underscore showcase spearhead streamline bolster
+cultivate amplify resonate indelible intricate nuanced multifaceted holistic robust
+seamless pivotal profound invaluable unwavering meticulous comprehensive
+transformative unparalleled compelling vibrant bustling nestled myriad plethora
+paramount cornerstone beacon catalyst paradigm ecosystem symphony labyrinth mosaic
+synergy""".split()
+VOCAB_PHRASES = [
+    "in today's fast-paced world", "ever-evolving landscape", "it's important to note",
+    "it's worth noting", "plays a crucial role", "serves as a testament",
+    "navigate the complexities", "unlock the full potential", "at its core",
+    "paves the way for", "sheds light on", "a double-edged sword",
+    "take it to the next level", "not just a", "isn't just a",
+]
+
+HARD, SOFT = "HARD", "warn"
+
+
+class Finding(object):
+    def __init__(self, sev, line, col, code, detail):
+        self.sev, self.line, self.col, self.code, self.detail = sev, line, col, code, detail
+
+    def fmt(self, path):
+        loc = "%s:%d:%d" % (path, self.line, self.col)
+        return "%-5s %-28s %s  %s" % (self.sev, loc, self.code, self.detail)
+
+
+def is_prose(name):
+    return os.path.splitext(name)[1].lower() in PROSE_EXT
+
+
+def scan(text, name="<stdin>"):
+    """Return (findings, skipped). Hard findings mean the content is defective."""
+    head = "\n".join(text.split("\n")[:30])
+    if MARKER in head:
+        return [], True
+
+    prose = is_prose(name)
+    out = []
+    lines = text.split("\n")
+
+    in_fence = False
+    for i, line in enumerate(lines, 1):
+        if prose and line.lstrip().startswith("```"):
+            in_fence = not in_fence
+        for j, ch in enumerate(line, 1):
+            if ch in INVISIBLE:
+                out.append(Finding(HARD, i, j, "invisible-char",
+                                   "U+%04X %s" % (ord(ch), INVISIBLE[ch])))
+            elif ch == NBSP:
+                sev = SOFT if prose else HARD
+                out.append(Finding(sev, i, j, "nbsp", "U+00A0 NO-BREAK SPACE"))
+            elif ch in TYPOGRAPHIC:
+                # In source code these break string comparison, diffs and copy-paste.
+                sev = SOFT if prose else HARD
+                out.append(Finding(sev, i, j, "non-ascii-punct",
+                                   "U+%04X %s" % (ord(ch), TYPOGRAPHIC[ch])))
+
+        for pat, why in PLACEHOLDER:
+            m = re.search(pat, line)
+            if m:
+                out.append(Finding(HARD, i, m.start() + 1, "placeholder",
+                                   "%s: %r" % (why, m.group(0)[:60])))
+        for pat, why in SCAFFOLDING:
+            m = re.search(pat, line)
+            if m:
+                out.append(Finding(HARD, i, m.start() + 1, "scaffolding",
+                                   "%s: %r" % (why, m.group(0)[:60])))
+
+        if prose and not in_fence:
+            taken = set(f.col for f in out if f.line == i and f.code == "placeholder")
+            for m in BRACKET_SLOT.finditer(line):
+                if line.count("`", 0, m.start()) % 2 == 1:
+                    continue
+                if m.start() + 1 not in taken:
+                    out.append(Finding(HARD, i, m.start() + 1, "placeholder",
+                                       "unfilled template slot: %r" % m.group(0)))
+            for rx, why in NEGATION:
+                m = rx.search(line)
+                if m and line.count("`", 0, m.start()) % 2 == 0:
+                    out.append(Finding(SOFT, i, m.start() + 1, "negation", why))
+                    break
+
+        if prose:
+            low = line.lower()
+            for w in VOCAB:
+                m = re.search(r"\b%s\b" % re.escape(w), low)
+                if m:
+                    out.append(Finding(SOFT, i, m.start() + 1, "vocab",
+                                       "'%s' - use the plain word" % w))
+            for p in VOCAB_PHRASES:
+                k = low.find(p)
+                if k >= 0:
+                    out.append(Finding(SOFT, i, k + 1, "phrase", "'%s'" % p))
+
+    if prose:
+        words = max(len(text.split()), 1)
+        ems = text.count("—")
+        if ems > 1 and ems / (words / 1000.0) > 3:
+            out.append(Finding(SOFT, 1, 1, "em-dash-density",
+                               "%d em dashes in %d words - target under 3 per 1000" % (ems, words)))
+    return out, False
+
+
+def read(path):
+    with open(path, "rb") as fh:
+        raw = fh.read()
+    if b"\0" in raw[:8000]:
+        return None
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def self_test():
+    cases = [
+        ("clean", "def f():\n    return 1\n", "x.py", 0, 0),
+        ("zwsp", "a = 1  ​\n", "x.py", 1, 0),
+        ("nbsp-code", "a = 1\n", "x.py", 1, 0),
+        ("nbsp-prose", "a b\n", "x.md", 0, 1),
+        ("curly-code", "s = “hi”\n", "x.py", 2, 0),
+        ("emdash-prose", "one — two\n", "x.md", 0, 1),
+        ("placeholder", "# your code here\n", "x.py", 1, 0),
+        ("elision", "// ... rest of the implementation\n", "x.js", 1, 0),
+        ("template", "Dear [Your Name],\n", "x.md", 1, 0),
+        ("scaffold", "As an AI language model, I cannot.\n", "x.md", 1, 0),
+        ("todo", "// TODO: implement logic\n", "x.js", 1, 0),
+        ("vocab", "We delve into the tapestry.\n", "x.md", 0, 2),
+        ("marker", "hygiene:ignore-file\n​\n", "x.md", 0, 0),
+        ("slot-email", "Hi [Name],\nWe at [Company] want\n", "x.md", 2, 0),
+        ("slot-dedupe", "Best,\n[Your Name]\n", "x.md", 1, 0),
+        ("md-link-ok", "See [Home](https://x.io), [TOC], [P] and [ref][1]\n", "x.md", 0, 0),
+        ("slot-in-code", "Write `[Name]` literally\n", "x.md", 0, 0),
+        ("slot-in-fence", "```\n[Name]\n```\n", "x.md", 0, 0),
+        ("ini-section-ok", "[Settings]\nkey=1\n", "x.ini", 0, 0),
+        ("py-index-ok", "v = d[Name]\n", "x.py", 0, 0),
+        ("negation", "They aren't there because you'll fail. They're there because it helps.\n", "x.md", 0, 1),
+        ("not-just", "Explain the why, not just the what.\n", "x.md", 0, 1),
+        ("plain-neg-ok", "It is not raining today.\n", "x.md", 0, 0),
+        ("negation-any-subj", "The reviews aren't there because you fail. They're there because it helps.\n", "x.md", 0, 1),
+        ("negation-its", "It's not a bug. It's a feature.\n", "x.md", 0, 1),
+        ("two-negs-ok", "Tests are not optional. Reviews are required too.\n", "x.md", 0, 0),
+    ]
+    bad = 0
+    for name, text, fn, want_hard, want_soft in cases:
+        f, skipped = scan(text, fn)
+        h = len([x for x in f if x.sev == HARD])
+        s = len([x for x in f if x.sev == SOFT])
+        ok = (h == want_hard and s == want_soft)
+        if not ok:
+            bad += 1
+        print("%-14s %s  hard=%d(want %d) soft=%d(want %d)"
+              % (name, "ok  " if ok else "FAIL", h, want_hard, s, want_soft))
+    print("\n%d/%d passed" % (len(cases) - bad, len(cases)))
+    return 1 if bad else 0
+
+
+def main():
+    ap = argparse.ArgumentParser(add_help=True)
+    ap.add_argument("files", nargs="*")
+    ap.add_argument("--stdin", action="store_true")
+    ap.add_argument("--name", default="<stdin>")
+    ap.add_argument("--quiet", action="store_true", help="print hard findings only")
+    ap.add_argument("--self-test", dest="selftest", action="store_true")
+    a = ap.parse_args()
+
+    if a.selftest:
+        return self_test()
+
+    items = []
+    if a.stdin:
+        items.append((a.name, sys.stdin.read()))
+    for p in a.files:
+        if os.path.splitext(p)[1].lower() in BINARY_EXT or os.path.isdir(p):
+            continue
+        t = read(p)
+        if t is not None:
+            items.append((p, t))
+    if not items:
+        ap.print_usage(sys.stderr)
+        return 3
+
+    hard = 0
+    for path, text in items:
+        findings, skipped = scan(text, path)
+        for f in findings:
+            if a.quiet and f.sev != HARD:
+                continue
+            print(f.fmt(path))
+            if f.sev == HARD:
+                hard += 1
+    return 1 if hard else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

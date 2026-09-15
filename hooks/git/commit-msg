@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# strip-ai-attribution - git commit-msg hook
+#
+# Removes AI tooling attribution from commit messages at the git layer.
+# This exists because ~/.claude/settings.json flags (includeCoAuthoredBy,
+# attribution.commit) have repeatedly failed to suppress these trailers, and
+# a newer "Claude-Session:" deep link bypasses the attribution setting entirely.
+#
+# Enforcement belongs where the model cannot route around it. That is here.
+#
+# Install:  see INSTALL.md
+
+set -euo pipefail
+MSG_FILE="$1"
+[ -f "$MSG_FILE" ] || exit 0
+
+TMP="$(mktemp)"
+trap 'rm -f "$TMP"' EXIT
+
+# Strip attribution lines. Extended regex, case-insensitive where it helps.
+grep -v -E \
+  -e '^[[:space:]]*Co-[Aa]uthored-[Bb]y:[[:space:]]*(Claude|Anthropic|Copilot|Cursor|Codex|Gemini|Windsurf)' \
+  -e '^[[:space:]]*Co-[Aa]uthored-[Bb]y:.*(noreply@anthropic\.com|copilot@github\.com|noreply@openai\.com)' \
+  -e '^[[:space:]]*Claude-Session:[[:space:]]*https?://' \
+  -e '^[[:space:]]*.?[[:space:]]*Generated with \[?(Claude|Cursor|Copilot|Codex)' \
+  -e '^[[:space:]]*(Generated|Created|Authored|Assisted) (with|by)[[:space:]]+(Claude|Anthropic|ChatGPT|Copilot|Cursor|Gemini|Codex)' \
+  -e '^[[:space:]]*https?://claude\.ai/code/session_' \
+  -e '^[[:space:]]*🤖' \
+  "$MSG_FILE" > "$TMP" || true
+
+# Collapse trailing blank lines left behind by the removals.
+awk 'BEGIN{n=0} {lines[NR]=$0} END{
+  last=NR
+  while (last>0 && lines[last] ~ /^[[:space:]]*$/) last--
+  for(i=1;i<=last;i++) print lines[i]
+}' "$TMP" > "$MSG_FILE"
+
+exit 0

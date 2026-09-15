@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# pre-commit - universal output-hygiene gate.
+#
+# This is the only layer that catches every AI tool. Claude Code, Codex, Cursor,
+# Copilot, a paste out of a chat window, or a human typing: all of it reaches git
+# eventually, and all of it passes through here.
+#
+# Blocks the commit on hard hygiene violations in staged files, and reports
+# imports that no manifest declares.
+#
+# Bypass:  AI_HYGIENE_SKIP=1 git commit ...   or   git commit --no-verify
+
+set -uo pipefail
+
+ROOT="${AI_RULES_HOME:-$HOME/.ai-rules}"
+HYGIENE="$ROOT/bin/content-hygiene"
+CHECKDEPS="$ROOT/bin/check-deps"
+
+[ "${AI_HYGIENE_SKIP:-0}" = "1" ] && exit 0
+[ -x "$HYGIENE" ] || exit 0
+
+# Added, copied, modified or renamed files only. NUL-delimited for odd names.
+staged=()
+while IFS= read -r -d '' f; do
+  [ -f "$f" ] && staged+=("$f")
+done < <(git diff --cached --name-only --diff-filter=ACMR -z)
+
+[ ${#staged[@]} -eq 0 ] && exit 0
+
+report="$("$HYGIENE" --quiet "${staged[@]}" 2>/dev/null)"
+status=$?
+
+if [ -n "$report" ]; then
+  {
+    echo
+    echo "Commit blocked: output-hygiene violations in staged files."
+    echo
+    echo "$report"
+    echo
+    echo "These are defects, not style preferences:"
+    echo "  invisible characters   break diffs, grep, CSV imports and string compares"
+    echo "  curly quotes in code   break string literals and comparisons"
+    echo "  placeholders           are unfinished work shipped as if complete"
+    echo "  scaffolding            is generation residue that does not belong in a deliverable"
+    echo
+    echo "Fix them, or opt a file out with  hygiene:ignore-file  in its first 30 lines"
+    echo "if it must legitimately contain these characters (test fixtures, reference docs)."
+    echo
+    echo "To bypass once:  AI_HYGIENE_SKIP=1 git commit ..."
+    echo
+  } >&2
+  exit 1
+fi
+
+# Advisory: unresolved imports. Never blocks.
+if [ -x "$CHECKDEPS" ]; then
+  deps="$("$CHECKDEPS" "${staged[@]}" 2>/dev/null)"
+  if [ -n "$deps" ]; then
+    {
+      echo
+      echo "Advisory - imports not declared in any manifest:"
+      echo
+      echo "$deps"
+      echo
+      echo "Committing anyway. Confirm each package exists before you push."
+      echo
+    } >&2
+  fi
+fi
+
+exit 0
