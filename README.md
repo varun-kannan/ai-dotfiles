@@ -1,4 +1,4 @@
-# rules-and-skills
+# ai-dotfiles
 
 One set of rules, skills and enforcement hooks for every AI coding agent on a
 machine. Write the rules once, and each installed agent gets them in the file it
