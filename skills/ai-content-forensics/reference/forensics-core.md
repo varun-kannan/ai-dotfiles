@@ -1,77 +1,51 @@
-# AI Content Forensics — v3
+# AI Content Forensics - Core Reference
 <!-- hygiene:ignore-file - quotes the patterns it documents -->
 
-**Verified 8 September 2026.** Supersedes v1 and v2.
+Sections 0-16: methodology, text, code, detectors, custody, policy. Documents,
+images, video, audio, data, academic publishing and legal exposure are in
+`forensics-modalities.md` (sections 17-30).
 
-Read §0 first. It contains retractions of false accusations I made in v2 and a code bug that produced silent false negatives.
+Claims were checked against the cited sources; the grades below say how. Facts
+about model coverage, detector accuracy and regulation go stale. Check the date
+on a claim before relying on it.
 
 ---
 
-## 0. Corrections to v2
+## 0. How to read this reference
 
-### 0.1 Retractions — I accused three sources of fabrication and was wrong all three times
-
-In v2 I labelled the following as fabricated or unverifiable. I had not searched for any of them. I inferred absence from searches I never ran, then published the inference as a finding — the exact failure mode I was criticising in the same section.
-
-| v2 claim | Reality |
-|---|---|
-| "`agentdiff` — could not verify it exists" | **Real.** `github.com/codeprakhar25/agentdiff`, also on crates.io (v0.1.27). Git-native, line-level, **ed25519-signed** attribution across Claude Code, Cursor, Copilot, Codex, Windsurf, OpenCode, Gemini. Records agent name, model, prompt excerpt, and exact line ranges to your own git refs. CLI-queryable, no server. Policy file at `.agentdiff/policy.toml` supports CI gates (`max_ai_percent`, `require_signed`). Your source described it accurately. |
-| "`aiwatermarking.org` — could not verify" | **Real.** A tracker publishing `watermarks.json`, `watermarks.csv`, and `sources.json` under CC BY 4.0, with per-row source keys and explicit flagging of unverified rows. Its stated editorial policy — list what you cannot confirm as unconfirmed rather than omitting it — is better practice than what I did in v2. |
-| "Zhang et al. — never verified, no URL" | **Real and peer-reviewed.** Zhang, Edelman, Francati, Venturi, Ateniese & Barak, *Watermarks in the Sand: Impossibility of Strong Watermarking for Language Models*, ICML 2024, PMLR 235:58851–58880. Code at `github.com/hlzhang109/impossibility-watermark`. **Important scope limit I should have stated:** their attack was demonstrated against KGW, EXP, and Unigram (green-list family) plus Stable Signature and Invisible Watermark for vision — **not against SynthID-Text**. |
-
-Note also: **"agentdiff" is a colliding name.** At least four unrelated projects use it (line-level provenance; a Claude Code session tracker; an agent-behaviour CI tool; a trajectory-diff library). Specify the repo, not the name.
-
-### 0.2 Code bug — the grep command failed silently
-
-The v2 `grep -P` command does not run in a default POSIX/C locale:
-
-```
-grep: character code point value in \x{} or \o{} is too large
-```
-
-Error goes to stderr, exit code is non-zero, **no output**. In a pipeline this reads as "file is clean." A check whose failure mode is a silent false negative is worse than no check. Tested and corrected:
-
-```bash
-LC_ALL=C.UTF-8 grep -P '[\x{00A0}\x{00AD}\x{200B}-\x{200F}\x{2028}\x{202F}\x{2060}\x{FEFF}]' file.txt
-```
-
-The Python snippet was tested and works correctly (5/5 planted characters, correct Unicode names).
-
-### 0.3 Other v2 defects corrected here
-
-- **Stat laundering.** "~19% metadata detection coverage" came from the README of a hobby Rust CLI whose pull request was itself co-authored by Claude Haiku. Removed. Veracode and Stanford figures are now sourced to primary or dated appropriately.
-- **Vendor conflict unflagged.** Several Pangram accuracy claims traced to Pangram's own blog summarising a study about Pangram. Now flagged inline.
-- **Stale figure presented as current.** Veracode's 2025 report has been superseded by a July 2026 edition. Updated in §7.5.
-- **Three competing taxonomies** (Layer 1–6 headers, Tier 1–5 in the report template, your source's 7 layers). Now one scheme, used consistently: **E1–E5**.
-- **Uncalibrated scoring rubric presented as methodology.** Now explicitly labelled as an uncalibrated worksheet with a warning against disciplinary use.
-- **No install instructions** for any recommended tool. Added in §3.3.
-
-### 0.4 Source-quality grading used throughout
+### 0.1 Source grades
 
 | Grade | Meaning |
 |---|---|
-| **[P]** | Primary — the organisation's own documentation, or the paper itself |
-| **[S]** | Secondary — reporting or analysis of a primary source |
+| **[P]** | Primary: the organisation's own documentation, or the paper itself |
+| **[S]** | Secondary: reporting or analysis of a primary source |
 | **[V]** | Vendor claim about the vendor's own product; treat as marketing until independently replicated |
-| **[U]** | Unverified — stated here, not confirmed |
+| **[U]** | Unverified: stated here, not confirmed |
+
+### 0.2 Real sources that are often assumed to be invented
+
+Absence from a quick search is not evidence of fabrication. These look invented and are not:
+
+| Source | What it is |
+|---|---|
+| `agentdiff` | `github.com/codeprakhar25/agentdiff`, also on crates.io. Git-native, line-level, **ed25519-signed** attribution across Claude Code, Cursor, Copilot, Codex, Windsurf, OpenCode and Gemini. Records agent, model, prompt excerpt and line ranges to your own git refs. Policy file `.agentdiff/policy.toml` supports CI gates (`max_ai_percent`, `require_signed`). **[P]** Note the name collides with at least four unrelated projects; cite the repo, not the name. |
+| `aiwatermarking.org` | A tracker publishing `watermarks.json`, `watermarks.csv` and `sources.json` under CC BY 4.0, with per-row sources and unverified rows flagged as such. **[P]** |
+| Zhang et al. | *Watermarks in the Sand: Impossibility of Strong Watermarking for Language Models*, Zhang, Edelman, Francati, Venturi, Ateniese & Barak, ICML 2024, PMLR 235:58851-58880. **[P]** Scope limit: the attack was demonstrated against KGW, EXP and Unigram (green-list family) and two image schemes, **not against SynthID-Text**. |
 
 ---
 
-## 1. Is the document you are reading watermarked?
+## 1. Which Claude models carry a text watermark?
 
-v2 never answered this, which was the largest single gap.
+Anthropic marks models **launched on or after 2 August 2026**. The supported list names **Fable 5.1 and Mythos 5.1**, released September 2026. **[P]**
 
-**Almost certainly not.**
+**Claude Opus 5 was released 24 July 2026**, nine days before the cutoff, and is not on the supported list. **[P: system card]** Anthropic says it is working to add marking to models released before the cutoff and gives **no date**. **[P]** Separately, the EU AI Act gives systems placed on the market before 2 August 2026 until **2 December 2026** to meet the Article 50(2) marking obligation. **[P: Commission FAQ]** That is a regulatory deadline, not an Anthropic commitment.
 
-Anthropic watermarks models **launched on or after 2 August 2026**. Currently supported: **Fable 5.1 and Mythos 5.1**, both released 1 September 2026 — the first models to arrive after the cutoff. **[P]**
+Consequences:
 
-**Claude Opus 5 was released 24 July 2026** — nine days before the cutoff. **[S, multiple independent trackers]** It is not on the supported list. It sits in the retrofit queue, which under the EU's AI Omnibus transition runs to **2 December 2026**.
-
-Consequences worth internalising:
-
-- **The most-used Claude models today are not watermarked.** Opus 5, Sonnet 5, Haiku 4.5, the whole 4.x line — none of them, pending retrofit.
-- Coverage is **per-model-version**, not per-vendor. "Claude watermarks its output" is false as a general statement, and will stay partially false at least until December.
-- Anyone building a detection pipeline must treat marking support as **a versioned capability, not a provider-wide boolean.** The specific model ID serving a request determines whether a mark can exist at all.
+- **Opus 5, Sonnet 5, Haiku 4.5 and earlier Claude models are not on the supported list.** Text they produced carries no mark to find.
+- Coverage is **per model version**, not per vendor. "Claude watermarks its output" is false as a general statement.
+- A detection pipeline must treat marking as **a versioned capability, not a provider-wide boolean.** The model ID that served a request decides whether a mark can exist at all.
+- Detection itself is gated: eligible organisations (regulators, law enforcement, media, fact-checkers, researchers, educators, EU civil society, and enterprises with their own compliance duties) apply through Anthropic's access request form. **[P]**
 
 ---
 
@@ -123,7 +97,8 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 cargo install c2patool
 
 # ripgrep
-sudo apt install ripgrep   |   brew install ripgrep
+sudo apt install ripgrep                       # Debian/Ubuntu
+brew install ripgrep                           # macOS
 ```
 
 ### 3.4 Commands
@@ -143,7 +118,7 @@ exiftool -IPTC:all -XMP:all image.png
 |---|---|---|
 | `openai.com/research/verify/` | OpenAI **images and audio** — C2PA + SynthID **[P]** | Free |
 | OpenAI `content_provenance_checks` API | Programmatic; returns per-signal `outcome` and `validation_state` **[P]** | API pricing |
-| `claude.com/check-content` | Claude-issued Content Credentials **[P]** | Free |
+| `claude.com/check-files` | Claude-issued Content Credentials **[P]** | Free |
 | `contentcredentials.org/verify` | General C2PA | Free |
 | `c2patool` | CLI, full manifest dump | Free |
 | `sightengine.com/c2pa-check` | Browser-side C2PA + EXIF/IPTC/XMP, edit-chain timeline | Freemium |
@@ -231,7 +206,7 @@ Figures circulating as "Claude requires 75–100 words" or "150–200 tokens" ar
 
 ---
 
-## 5. Base rates — the section v2 was missing entirely
+## 5. Base rates
 
 This is the most important statistical content in the document, and it was absent.
 
@@ -259,7 +234,7 @@ Read that carefully. **The same detector, unchanged, is trustworthy in one setti
 
 ## 6. Hybrid text — the modal real case
 
-Most real documents are neither purely human nor purely AI. Human drafts, AI edits, human revises. Or AI drafts, human rewrites half. Nearly every framework — including v2's — is implicitly binary against a world that isn't.
+Most real documents are neither purely human nor purely AI. Human drafts, AI edits, human revises. Or AI drafts, human rewrites half. Most detection frameworks are implicitly binary against a world that isn't.
 
 **What the evidence says:** a 2026 peer-reviewed study (Hadra, Cambridge & Mesbah; 192 human, AI, and hybrid texts) reported Turnitin overall accuracy of **0.61**, and found **hybrid writing particularly difficult to classify**. **[S]** Another 2026 study (VUB) used a four-way ground truth — human, AI, hybrid, and "humanised" — precisely because the binary framing fails.
 
@@ -332,7 +307,7 @@ None of that names a model. It establishes that code did not develop the way hum
 
 **Veracode 2026 GenAI Code Security Report (28 July 2026) [P]** — supersedes the 2025 edition:
 
-- **~44% of AI code-generation tasks introduced a risky security vulnerability**; security pass rate **56%**, versus 55% in the first report. **Flat across four testing snapshots and 100+ models.**
+- **~44% of AI code-generation tasks introduced a risky security vulnerability**; security pass rate **56%** (July 2026 report). **[P]** The Spring 2026 update describes the pass rate as flat at roughly 55% across two years of model releases and 150+ models evaluated. **[P]**
 - Meanwhile **syntax pass rates climbed from ~50% to >95%** since 2023. The gap between "code that works" and "code that works safely" is widening.
 - **Cross-site scripting passed only ~15% of checks** (85% failure). **Log injection ~12%.** The Cloud Security Alliance independently measured XSS failure at 86% — close enough to treat as reproducible.
 - Newer and larger models did **not** produce more secure code, suggesting a structural rather than temporary problem.
@@ -355,7 +330,7 @@ Over-commenting the obvious · uniform tutorial-voice comments · elaborate sect
 ### 8.1 Accuracy landscape
 
 - **Pangram** — claims 99.98% accuracy, ~1-in-10,000 FPR **[V]**. UChicago Booth and UMD researchers reported the lowest FPR of any tool tested **[S]**; tied first at 99.3% on COLING 2025 **[S]**. **Conflict note:** a substantial share of circulating Pangram evidence is Pangram summarising studies about Pangram. Weight accordingly.
-- **VUB 2026 (peer-reviewed, 160 papers 4,000+ words)** — Turnitin, GPTZero and Copyleaks **completely failed** on fully AI-generated papers; Turnitin scored all 40 between 0–20% AI. Pangram: **65% strict, 97.5% inclusive**. *That 65% strict figure is not obviously "satisfactory" — v2 quoted both without reconciling them.* **[S]**
+- **VUB 2026 (peer-reviewed, 160 papers 4,000+ words)** — Turnitin, GPTZero and Copyleaks **completely failed** on fully AI-generated papers; Turnitin scored all 40 between 0–20% AI. Pangram: **65% strict, 97.5% inclusive**. *A 65% strict figure is not obviously "satisfactory"; read the two numbers together.* **[S]**
 - **Hadra, Cambridge & Mesbah 2026** — Turnitin overall accuracy **0.61**; hybrid hardest. **[S]**
 - **Originality.ai** — ~85% across 11 models on RAID; FPR reported 0.62%–9.24% depending on study. **[S]**
 - OpenAI discontinued its own classifier in 2023 for inadequate accuracy.
@@ -371,7 +346,7 @@ Scores from **1% to 19% are suppressed**, shown as `*%` with no percentage and n
 
 ### 8.3 Systematic false positives
 
-- **Non-native English speakers.** Stanford HAI (Liang et al.) found seven detectors misclassified **61.22% of TOEFL essays** by non-native writers as AI-generated. **[S] — important caveat v2 omitted: this is a 2023 study testing 2023-era detectors against GPT-3.5-era text.** The concern is almost certainly still live; that specific number is three model generations old. Cite it as evidence of a documented failure mode, not as a current measurement.
+- **Non-native English speakers.** Stanford HAI (Liang et al.) found seven detectors misclassified **61.22% of TOEFL essays** by non-native writers as AI-generated. **[S] Caveat: this is a 2023 study testing 2023-era detectors against GPT-3.5-era text.** The concern is almost certainly still live; that specific number is three model generations old. Cite it as evidence of a documented failure mode, not as a current measurement.
 - Autistic writers; formally-trained technical, legal, scientific writers.
 - Heavy Grammarly users.
 - Formal academic tone and repeated domain terminology — both legitimately lower perplexity.
@@ -402,20 +377,31 @@ Copy-paste debris from chat-interface HTML rendering. Real watermarks add nothin
 | `U+200E`/`U+200F` | LTR / RTL marks |
 | `U+2028` | Line separator |
 
+GNU grep or ugrep (Linux, or `brew install grep` then use `ggrep`). The locale prefix
+is required: without it GNU grep errors to stderr, prints nothing, and a pipeline
+reads that as "clean". **Stock macOS `/usr/bin/grep` has no `-P` at all** and fails
+the same silent way.
+
 ```bash
-LC_ALL=C.UTF-8 grep -P '[\x{00A0}\x{00AD}\x{200B}-\x{200F}\x{2028}\x{202F}\x{2060}\x{FEFF}]' file.txt
+LC_ALL=C.UTF-8 grep -nP '[\x{00A0}\x{00AD}\x{200B}-\x{200F}\x{2028}\x{202F}\x{2060}\x{FEFF}]' file.txt
 ```
+
+Portable, no dependencies:
 
 ```python
-import unicodedata
-SUSPECT = {'\u00a0','\u00ad','\u200b','\u200c','\u200d','\u200e','\u200f',
-           '\u2028','\u202f','\u2060','\ufeff'}
-for i, ch in enumerate(text):
-    if ch in SUSPECT:
-        print(i, hex(ord(ch)), unicodedata.name(ch, '?'))
+import sys, unicodedata
+
+SUSPECT = {'\u00a0', '\u00ad', '\u200b', '\u200c', '\u200d', '\u200e', '\u200f',
+           '\u2028', '\u202f', '\u2060', '\ufeff'}
+
+text = open(sys.argv[1], encoding='utf-8').read()
+for lineno, line in enumerate(text.split('\n'), 1):
+    for col, ch in enumerate(line, 1):
+        if ch in SUSPECT:
+            print(f'{lineno}:{col} U+{ord(ch):04X} {unicodedata.name(ch, "?")}')
 ```
 
-Both tested. The grep **requires** the locale prefix.
+Run as `python3 find_invisible.py file.txt`.
 
 ### 8.6 Stylometry
 
@@ -450,7 +436,7 @@ Compare against **the author's own baseline**, not an abstract AI profile. Devia
 
 ## 9. Chain of custody
 
-A report with no evidence handling does not survive challenge. v2 had none.
+A report with no evidence handling does not survive challenge.
 
 **Before analysis:**
 
@@ -472,7 +458,7 @@ Record: how you obtained it, from whom, when (UTC), in what format, and whether 
 
 ## 10. If you are the one accused
 
-Absent from v1 and v2, and — given the base-rate arithmetic in §5 — at least as important as the detection side.
+Given the base-rate arithmetic in §5, this side matters at least as much as detection.
 
 1. **Ask what the evidence actually is.** A percentage is not evidence. Which tier (§2)? A detector score, or a signed manifest? What tool, what version, what date?
 2. **Cite the vendor's own limits.** Turnitin's documentation says the report should not be the sole basis for action, and suppresses its own scores below 20% because of false positives. **[P]** Anthropic's documentation says a detected mark shows processing, not authorship, and that absence of a mark proves nothing. **[P]** Vendors have already conceded the key points.
@@ -517,8 +503,8 @@ Arithmetic without process causes harm. If you are setting institutional policy:
 |---|---|---|---|
 | 1 | Hash, timestamp, copy | Custody established | 1 min |
 | 2 | `c2patool` on all figures | 2 charts carry OpenAI C2PA, `trainedAlgorithmicMedia` | 2 min |
-| 3 | `claude.com/check-content` on the PDF | No Claude credential | 1 min |
-| 4 | Claude text watermark | **Not testable** — no public API, and if written on Opus 5, no mark exists to find | — |
+| 3 | `claude.com/check-files` on the PDF | No Claude credential | 1 min |
+| 4 | Claude text watermark | **Not testable** without eligible-organisation detection access, and if written on Opus 5 no mark exists to find | — |
 | 5 | Scaffolding scan | One `:contentReference[oaicite:3]` in a footnote | 2 min |
 | 6 | Resolve all 11 citations | 3 DOIs do not resolve; 1 quote misattributed | 25 min |
 | 7 | Resolve all imports in the script | 1 of 9 does not exist on PyPI | 5 min |
@@ -621,10 +607,10 @@ Say **"confirmed AI-processed"** only with provider-linked evidence. Otherwise: 
 
 ---
 
-## 15. Fifteen things to keep straight
+## 15. Things to keep straight
 
-1. **Watermark coverage is per-model-version, not per-vendor.** Fable 5.1 and Mythos 5.1 are marked. Opus 5 (24 July 2026), Sonnet 5, Haiku 4.5 are not, pending retrofit by 2 December 2026.
-2. **This document is almost certainly unwatermarked**, on that basis.
+1. **Watermark coverage is per model version, not per vendor.** Fable 5.1 and Mythos 5.1 are marked. Opus 5 (24 July 2026), Sonnet 5 and Haiku 4.5 are not. Anthropic gives no retrofit date; the EU deadline for pre-August-2026 systems is 2 December 2026.
+2. **Detection is gated.** Anthropic's text detector is limited to eligible organisations; there is no public text checker.
 3. **Real watermarks add nothing to the text.** Any "remover" that strips Unicode is removing artifacts, not watermarks.
 4. **`--` is a human tell.** The em dash `—` is the AI one.
 5. **OpenAI has no text watermark but the best public verifier** — images and audio, free, plus an API. Anthropic has the reverse.
@@ -647,7 +633,7 @@ Say **"confirmed AI-processed"** only with provider-linked evidence. Otherwise: 
 
 - Anthropic — *How Claude's text watermark works* (14 Aug 2026, upd. 1 Sep 2026) — https://www.anthropic.com/news/claude-text-watermark
 - Anthropic Help Center — *How Claude marks AI-generated content* — https://support.claude.com/en/articles/16266773-how-claude-marks-ai-generated-content
-- Claude Content Checker — https://claude.com/check-content
+- Claude file checker - https://claude.com/check-files
 - Anthropic detector access form — https://forms.gle/9tGA33hPJJwtHsMk9
 - **OpenAI Verify (images + audio, free)** — https://openai.com/research/verify/
 - OpenAI — *Advancing content provenance* (upd. 31 July 2026) — https://openai.com/index/advancing-content-provenance/
@@ -680,11 +666,3 @@ Say **"confirmed AI-processed"** only with provider-linked evidence. Otherwise: 
 - **AI Watermarking Tracker** (CC BY 4.0 data) — https://aiwatermarking.org/data/
 
 **Still unverified [U]** — Origin Lens · Erase Meta · AI Content Scanner · "$0.04 per pass" evasion figure · Copyleaks code-detection deprecation · Midjourney v8 / Sora 3 version specifics · Mistral and Cohere deployment status · any per-model token threshold attributed to Anthropic.
-
----
-
-## 16. Disclosure
-
-Written by Claude (Opus 5), which per §1 is not currently watermarked. Every primary source was fetched or searched during composition; grades in §0.4 mark what was verified directly versus taken from reporting. The two code snippets in §8.5 were executed and tested; the grep required correction. Three accusations of fabrication in v2 were checked and retracted in §0.1.
-
-The document also trips most of its own §8.6 tells — heavy em dashes, bold lead-in bullets, rule-of-three, uniform paragraphs, no orphan ideas. That is not evidence of anything, which is the point the document keeps making.

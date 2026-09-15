@@ -95,10 +95,11 @@ Write commit messages that describe **the change**, not the tooling.
 Models invent packages whose names follow conventions perfectly but don't exist. Attackers register those names and wait — *slopsquatting* is a live supply-chain attack.
 
 ```bash
-npm view <package> version        # npm
-pip index versions <package>      # PyPI
-cargo search <crate>              # crates.io
-go list -m <module>@latest        # Go
+PKG=requests                         # the name you intend to import
+npm view "$PKG" version              # npm
+python3 -m pip index versions "$PKG" # PyPI
+cargo search "$PKG"                  # crates.io
+go list -m "$PKG@latest"             # Go, full module path
 ```
 
 If you can't verify it, say so instead of importing it. Same for API endpoints, CLI flags, config keys, and environment variables — check the docs or `--help`, don't infer from naming patterns.
@@ -244,10 +245,16 @@ Mechanical transitions: Moreover · Furthermore · Additionally · Consequently 
 **Check before delivering** anything long or destined for a file:
 
 ```bash
+~/.ai-rules/bin/content-hygiene file    # installed with these rules; works everywhere
+```
+
+With GNU grep or ugrep only:
+
+```bash
 LC_ALL=C.UTF-8 grep -nP '[\x{00A0}\x{00AD}\x{200B}-\x{200F}\x{2028}\x{202F}\x{2060}\x{FEFF}]' file
 ```
 
-The `LC_ALL=C.UTF-8` prefix is required. Without it the command errors to stderr and prints nothing, which reads as "clean."
+Both halves of that grep fail silently: without the `LC_ALL=C.UTF-8` prefix GNU grep errors to stderr and prints nothing, and stock macOS `/usr/bin/grep` has no `-P` at all. Either way a pipeline reads the silence as "clean."
 
 ---
 

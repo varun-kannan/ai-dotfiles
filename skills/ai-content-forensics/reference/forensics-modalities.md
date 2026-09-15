@@ -1,17 +1,18 @@
-# AI Content Forensics — v4 Addendum
+# AI Content Forensics - Modalities Reference
 <!-- hygiene:ignore-file - quotes the patterns it documents -->
 
-**Companion to v3. Sections 17–30. Verified 8 September 2026.**
+Sections 17-30: documents, images, video, audio, data, academic publishing,
+detector false-positive rates, evasion tells, model habits, legal exposure,
+decision flow and costs. Methodology (evidence tiers, base rates, code, custody,
+policy) is in `forensics-core.md` (sections 0-16).
 
-v3 fixed the methodology (base rates, hybrid text, defence, chain of custody, policy) but silently regressed on breadth — video, audio, documents, generator metadata and model-specific habits were dropped in the rewrite, and several categories were never covered at all. This addendum closes those. v3's §0–§16 stand; nothing here supersedes them.
-
-Source grades as in v3 §0.4: **[P]** primary · **[S]** secondary · **[V]** vendor · **[U]** unverified.
+Source grades as in core §0.1: **[P]** primary · **[S]** secondary · **[V]** vendor · **[U]** unverified.
 
 ---
 
 ## 17. Documents — PDF, Office, slides, spreadsheets
 
-Restored from v2 and expanded. This is E1/E3 evidence and it is routinely ignored in favour of much weaker E5 scores.
+This is E1/E3 evidence and it is routinely ignored in favour of much weaker E5 scores.
 
 ### 17.1 The strongest check available to any teacher or editor
 
@@ -21,7 +22,7 @@ Restored from v2 and expanded. This is E1/E3 evidence and it is routinely ignore
 - **Microsoft Word** — Version History via OneDrive/SharePoint; local files only if AutoRecover or tracked changes are on.
 - **What you're looking for:** total edit sessions, the largest single insertion, ratio of typed characters to pasted characters, and whether the document grew linearly or appeared in blocks.
 
-No detector, no vendor, no cost, and it survives appeal in a way a percentage never will. It is also the single best thing to preserve if you are the one accused (v3 §10).
+No detector, no vendor, no cost, and it survives appeal in a way a percentage never will. It is also the single best thing to preserve if you are the one accused (core §10).
 
 ### 17.2 PDF metadata
 
@@ -71,13 +72,13 @@ Same for `.pptx` and `.xlsx` — identical ZIP structure, same `docProps/`.
 
 ### 17.5 CMS and email paste artifacts
 
-HTML pasted from a chat UI carries the source stylesheet: `<span style="white-space: pre-wrap">`, `data-*` attributes, or class names matching a known interface. View source before publishing, and grep for `U+202F` (v3 §8.5).
+HTML pasted from a chat UI carries the source stylesheet: `<span style="white-space: pre-wrap">`, `data-*` attributes, or class names matching a known interface. View source before publishing, and grep for `U+202F` (core §8.5).
 
 ---
 
 ## 18. Images — generator-specific metadata
 
-v3 §3 covers C2PA and IPTC. This is the per-generator layer that got dropped, and it is often more informative than C2PA because **unsigned metadata is verbose**.
+Core §3 covers C2PA and IPTC. This is the per-generator layer, and it is often more informative than C2PA because **unsigned metadata is verbose**.
 
 | Generator | C2PA | What it writes |
 |---|---|---|
@@ -200,7 +201,7 @@ Note that a browser-side voice detector cannot decode SynthID or verify C2PA cry
 
 ## 21. AI-generated data
 
-v3 cited the `trainedAlgorithmicData` C2PA URI and never developed it. Fabricated datasets, synthetic survey responses, and invented results are a distinct category with their own mature methods — most of which predate LLMs and are unaffected by them.
+Core §3.2 lists the `trainedAlgorithmicData` C2PA URI for AI-generated data. Fabricated datasets, synthetic survey responses, and invented results are a distinct category with their own mature methods — most of which predate LLMs and are unaffected by them.
 
 ### 21.1 The scale of the survey problem
 
@@ -221,14 +222,14 @@ The leading significant digit of many natural datasets follows a logarithmic dis
 **It does not work on** Likert scales, percentages, ages, bounded measurements, assigned identifiers, or anything with a natural cap. Applying it there produces confident nonsense. Use **Sison & Glaz confidence intervals** for the multinomial test, and a **modified/generalized Benford** analysis with a cutoff log-normal where accounting limits exist — this materially reduces false positives.
 
 ```python
-import numpy as np
+import math
 from collections import Counter
 
 def benford(values):
     lead = [int(str(abs(v)).lstrip('0.').replace('.','')[0])
             for v in values if v and str(abs(v)).lstrip('0.')]
     obs = Counter(lead); n = len(lead)
-    exp = {d: np.log10(1 + 1/d) for d in range(1, 10)}
+    exp = {d: math.log10(1 + 1/d) for d in range(1, 10)}
     chi2 = sum((obs.get(d,0) - exp[d]*n)**2 / (exp[d]*n) for d in range(1,10))
     return {d: (obs.get(d,0)/n, exp[d]) for d in range(1,10)}, chi2, n
 # chi2 > 20.09 at df=8 → p < 0.01. n < 100 → do not interpret.
@@ -246,7 +247,7 @@ def benford(values):
 | **Response-time distributions** | Impossibly fast completions; suspiciously uniform per-question timing |
 | **Straight-lining / patterned responding** | Same option throughout, or a repeating pattern |
 | **Attention-check failure clustering** | Correlated failures across supposedly independent respondents |
-| **Open-text analysis** | Apply v3 §8 to free-text fields — LLM-generated survey answers carry the same lexical and structural tells |
+| **Open-text analysis** | Apply core §8 to free-text fields — LLM-generated survey answers carry the same lexical and structural tells |
 
 ### 21.4 Interpretation
 
@@ -292,7 +293,7 @@ Machine-paraphrased scientific terms — grammatically fine, scientifically mean
 
 ### 22.3 The other detectors
 
-- **ChatGPT fingerprints** — the leaked-scaffolding class from v3 §8.7, found in published literature. Authors pasting output without reading it.
+- **ChatGPT fingerprints** — the leaked-scaffolding class from core §8.7, found in published literature. Authors pasting output without reading it.
 - **SCIgen / Mathgen gibberish** — grammar-generated nonsense papers, identified by fingerprint word sequences characteristic of the generator's context-free grammar.
 - **"Clay feet"** — papers whose citations point at already-flagged problematic papers. Paper-mill output tends to cite other paper-mill output, which makes citation graphs a detection surface in their own right.
 
@@ -310,11 +311,13 @@ And a point every institution should absorb, from a publishing-integrity practit
 
 ## 23. Full detector roster with measured false-positive rates
 
-v3 covered five commercial tools. Here is the real landscape, including the academic methods, and — more importantly — **independently measured FPRs**.
+Core §8 covers five commercial tools. Here is the wider landscape, including the academic methods, and — more importantly — **independently measured FPRs**.
 
 ### 23.1 The RAID benchmark FPR table
 
-From RAID (arXiv 2405.07940), measured false-positive rates at four threshold choices. **This table is the most useful thing in this addendum.** **[P]**
+From RAID (arXiv 2405.07940), Table 4: false-positive rates at four **naive** threshold choices (τ), measured on RAID's own human-written text. **[P]**
+
+Read it with two limits. The paper's headline accuracy results do **not** use these thresholds; they calibrate a threshold per detector and per domain to a **5% FPR**. And a near-zero FPR here says nothing about text unlike RAID's, such as non-native English (core §8.3), where the same commercial tools are documented to misfire.
 
 | Detector | t=0.25 | t=0.5 | t=0.75 | t=0.95 |
 |---|---|---|---|---|
@@ -336,7 +339,7 @@ Three things to take from this:
 2. **Some widely-cited academic methods are unusable at default settings.** LLMDet at 97.9% FPR is flagging essentially everything.
 3. **Metric-based methods (Binoculars, Fast-DetectGPT) generalise across domains surprisingly well** — which is not what most people assume about zero-shot approaches.
 
-Feed these numbers into v3 §5's base-rate arithmetic before choosing anything.
+Feed these numbers into core §5's base-rate arithmetic before choosing anything.
 
 ### 23.2 Binoculars — the method worth knowing
 
@@ -364,7 +367,7 @@ Feed these numbers into v3 §5's base-rate arithmetic before choosing anything.
 
 ### 23.4 Commercial roster
 
-Beyond v3's five: **Winston AI**, **Sapling**, **ZeroGPT**, **Scribbr**, **Smodin**, **Copyleaks**, **Crossplag**. Treat all vendor-published accuracy figures as **[V]** until independently replicated — including Pangram's, as flagged in v3 §8.1.
+Beyond the five in core §8: **Winston AI**, **Sapling**, **ZeroGPT**, **Scribbr**, **Smodin**, **Copyleaks**, **Crossplag**. Treat all vendor-published accuracy figures as **[V]** until independently replicated — including Pangram's, as flagged in core §8.1.
 
 ### 23.5 The methodology that actually reduces false positives
 
@@ -380,7 +383,7 @@ This is the correct pattern for anyone deploying detection at scale, and it cost
 
 ## 24. Humanisers and paraphrasers — the inverse tells
 
-Dropped after v1. This matters because paraphrasing is **the** effective attack: >90% watermark scrubbing (v3 §4.5), and it collapses detector performance generally.
+This matters because paraphrasing is **the** effective attack: >90% watermark scrubbing (core §4.5), and it collapses detector performance generally.
 
 **The ecosystem:** QuillBot, Undetectable.ai, StealthGPT, HIX Bypass, WriteHuman, Humanize AI, plus older spinners (SpinBot) that produced the tortured phrases in §22.
 
@@ -402,12 +405,12 @@ Dropped after v1. This matters because paraphrasing is **the** effective attack:
 
 ## 25. Model-specific style habits
 
-Restored from v2. Weak individually **[E5]**; people triangulate with them.
+Weak individually **[E5]**; people triangulate with them.
 
 | Model | Habits |
 |---|---|
 | **ChatGPT (GPT-4o/5)** | Em dash volume, `U+202F`, "Certainly!", bold lead-in bullets, emoji headers, "Here's the thing:", closing "Want me to…?", LaTeX delimiters, `contentReference` leakage, listicle bias |
-| **Claude** | Longer flowing paragraphs, fewer bullets, "I should note", "That said", reasoning-out-loud, explicit tradeoffs, XML-ish tags if tooling leaks. **Watermarked only on Fable 5.1 / Mythos 5.1** (v3 §1) |
+| **Claude** | Longer flowing paragraphs, fewer bullets, "I should note", "That said", reasoning-out-loud, explicit tradeoffs, XML-ish tags if tooling leaks. **Watermarked only on Fable 5.1 / Mythos 5.1** (core §1) |
 | **Gemini** | Heavy `**bold**` mid-sentence, "Sources and related content", tabular comparisons, SynthID-Text |
 | **Copilot** | Superscript citations, hedged corporate register, "I'd be happy to help with that" |
 | **Perplexity** | Dense `[1][2][3]`, short paragraphs, source list at end |
@@ -433,7 +436,7 @@ Under **GDPR** and India's **DPDP Act 2023**, analysing someone's writing to inf
 - **Transparency.** Data subjects must be told detection is in use, on what basis, and what happens to results. **Undisclosed detection is difficult to defend under any framework.**
 - **Purpose limitation.** A detector run for academic integrity cannot be repurposed for performance management.
 - **Retention.** Decide how long scores and flagged documents persist. Indefinite retention of "suspected of cheating" records is a real liability.
-- **Access and rectification.** The subject can request the score and challenge it. Your chain-of-custody record (v3 §9) is what makes that answerable.
+- **Access and rectification.** The subject can request the score and challenge it. Your chain-of-custody record (core §9) is what makes that answerable.
 
 ### 26.2 Third-party detectors are data transfers
 
@@ -447,11 +450,11 @@ GDPR Article 22 restricts decisions based solely on automated processing with le
 
 ### 26.4 Discrimination exposure
 
-Given the documented failure modes (v3 §8.3, §8.4), a detection regime that disproportionately flags non-native speakers or disabled writers is a discrimination risk under equality legislation in most jurisdictions, independent of intent. **Monitor outcomes by group. If you are not measuring it, you cannot defend it.**
+Given the documented failure modes (core §8.3, §8.4), a detection regime that disproportionately flags non-native speakers or disabled writers is a discrimination risk under equality legislation in most jurisdictions, independent of intent. **Monitor outcomes by group. If you are not measuring it, you cannot defend it.**
 
 ### 26.5 Defamation and employment
 
-Stating that someone used AI, when your evidence is a probabilistic score, carries defamation risk if communicated beyond those with a need to know, and unfair-dismissal risk if it grounds termination. Use "shows indicators consistent with" language (v3 §14.1), restrict circulation, and document the corroborating evidence.
+Stating that someone used AI, when your evidence is a probabilistic score, carries defamation risk if communicated beyond those with a need to know, and unfair-dismissal risk if it grounds termination. Use "shows indicators consistent with" language (core §14.1), restrict circulation, and document the corroborating evidence.
 
 ---
 
@@ -530,7 +533,7 @@ Never covered. Budget before designing a pipeline.
 | Hash + custody | Free | <1 min | Non-negotiable |
 | `c2patool` | Free (Rust build) | seconds | Batchable |
 | ExifTool | Free | seconds | Batchable; the workhorse |
-| `claude.com/check-content` | Free | seconds | Manual upload; no public API |
+| `claude.com/check-files` | Free | seconds | Manual upload; no public API |
 | **OpenAI Verify** | Free (web) | seconds | API billed; **the best free verifier** |
 | OpenAI provenance API | API pricing | seconds | Structured `outcome` + `validation_state` |
 | Anthropic text detection | N/A | — | **Private preview; no public access** |
@@ -545,7 +548,7 @@ Never covered. Budget before designing a pipeline.
 | Stylometric baseline | Free | 30–60 min | Needs prior samples from the author |
 | Audio/video artifact review | Free–expensive | 30 min–hours | Poor return; do provenance first |
 
-**Realistic totals:** a 4,000-word document with code takes about **1 hour** (v3 §12), and citation verification is most of it. **Automate import resolution and DOI checks** — they are the highest-yield checks and the most mechanisable. A 10-minute script pays for itself immediately.
+**Realistic totals:** a 4,000-word document with code takes about **1 hour** (core §12), and citation verification is most of it. **Automate import resolution and DOI checks** — they are the highest-yield checks and the most mechanisable. A 10-minute script pays for itself immediately.
 
 **Rate limits:** free web verifiers are not built for bulk. For volume, use the APIs and respect their limits, or run local methods.
 
@@ -553,7 +556,7 @@ Never covered. Budget before designing a pipeline.
 
 ## 29. What this still does not cover
 
-Stated plainly, so the next reader doesn't assume completeness. This is the pattern that produced v3's silent regression.
+Stated plainly, so no reader assumes completeness.
 
 - **Live/streaming detection** — real-time video calls, live audio. Different problem, largely unsolved.
 - **Multimodal cross-checks** — verifying that an image, its caption, and its metadata are mutually consistent.
@@ -564,7 +567,7 @@ Stated plainly, so the next reader doesn't assume completeness. This is the patt
 - **Hardware provenance** — C2PA at point of capture in cameras and phones; deployed but not covered here.
 - **Blockchain/timestamping provenance** — an alternative approach, unassessed.
 - **Insurance, procurement, and contractual angles** — AI-use warranties in supplier contracts.
-- **Jurisdiction beyond the EU** — China's Sept 2025 visible-label rules are mentioned in v3; US state laws (California AB 602, Texas SB 751 and successors) and India's framework are not analysed.
+- **Jurisdiction beyond the EU** — China's Sept 2025 visible-label rules **[U]**, US state laws (California AB 602, Texas SB 751 and successors) and India's framework are not analysed.
 - **Sector-specific regimes** — medical, financial, and legal filings have their own disclosure duties.
 
 ---
@@ -573,34 +576,34 @@ Stated plainly, so the next reader doesn't assume completeness. This is the patt
 
 | Need | Section |
 |---|---|
-| Is Claude's output watermarked? | v3 §1 |
-| Evidence tiers E1–E5 | v3 §2 |
-| C2PA / image provenance | v3 §3 · v4 §18 |
-| Watermark mechanism and attacks | v3 §4 |
-| Base rates and PPV | v3 §5 |
-| Hybrid human/AI text | v3 §6 |
-| Code | v3 §7 |
-| Detectors, stylometry, Unicode | v3 §8 · v4 §23 |
-| Chain of custody | v3 §9 |
-| If you're accused | v3 §10 |
-| Policy design | v3 §11 |
-| Worked example, report template | v3 §12–13 |
-| **Documents, PDF, Office** | **v4 §17** |
-| **Generator-specific image metadata** | **v4 §18** |
-| **Video** | **v4 §19** |
-| **Audio, voice, music** | **v4 §20** |
-| **Fabricated data, surveys** | **v4 §21** |
-| **Academic publishing, paper mills** | **v4 §22** |
-| **Measured detector FPRs (RAID)** | **v4 §23.1** |
-| **Humanisers, evasion tells** | **v4 §24** |
-| **Model-specific habits** | **v4 §25** |
-| **Legal and privacy exposure** | **v4 §26** |
-| **Decision flow** | **v4 §27** |
-| **Costs and time** | **v4 §28** |
+| Which Claude models are watermarked? | core §1 |
+| Evidence tiers E1–E5 | core §2 |
+| C2PA / image provenance | core §3 · §18 |
+| Watermark mechanism and attacks | core §4 |
+| Base rates and PPV | core §5 |
+| Hybrid human/AI text | core §6 |
+| Code | core §7 |
+| Detectors, stylometry, Unicode | core §8 · §23 |
+| Chain of custody | core §9 |
+| If you're accused | core §10 |
+| Policy design | core §11 |
+| Worked example, report template | core §12–13 |
+| **Documents, PDF, Office** | **§17** |
+| **Generator-specific image metadata** | **§18** |
+| **Video** | **§19** |
+| **Audio, voice, music** | **§20** |
+| **Fabricated data, surveys** | **§21** |
+| **Academic publishing, paper mills** | **§22** |
+| **Measured detector FPRs (RAID)** | **§23.1** |
+| **Humanisers, evasion tells** | **§24** |
+| **Model-specific habits** | **§25** |
+| **Legal and privacy exposure** | **§26** |
+| **Decision flow** | **§27** |
+| **Costs and time** | **§28** |
 
 ---
 
-## Sources added in v4
+## Sources
 
 **[P] Primary:**
 
@@ -629,48 +632,3 @@ Stated plainly, so the next reader doesn't assume completeness. This is the patt
 - Suno v5.5 Voices detection analysis — vendor-adjacent blog
 - Pindrop / Resemble Detect / Hiya performance claims — vendor
 - Midjourney C2PA status as of early 2026
-
----
-
-## 31. Disclosure
-
-Written by Claude (Opus 5), which per v3 §1 is not currently watermarked. Every claim carries a source grade. Code in §17.3 and §21.2 was written for this document; the `benford()` function is illustrative and its chi-square threshold assumes n ≥ 100 — validate before relying on it.
-
-**Known limitation of this addendum:** §29 lists what it does not cover. That list exists because v3 dropped four modality sections without flagging it, and word count alone concealed the loss. If you extend this further, diff the section map, not the length.
-
----
-
-## 32. Operational rules — turning forensics into practice
-
-The rest of this document is about *detecting* AI involvement after the fact. This section is the inverse: standing rules that make AI-assisted work clean, checkable, and honestly attributed in the first place. Shipped as `CLAUDE.md` + `INSTALL.md` + `strip-ai-attribution` alongside this file.
-
-### 32.1 Why the rules map onto the forensics
-
-| Rule | Forensic basis |
-|---|---|
-| Verify every dependency exists | v3 §7.1 — phantom imports are the single strongest AI-code signal, and the slopsquatting attack surface |
-| Never cite an unread source | v3 §0.1 — three false fabrication accusations in v2 came from exactly this |
-| Mark uncertainty explicitly | v3 §0.4 source grading; unverifiable claims poison a report |
-| XSS and log-injection focus | v4 §7.5 — measured ~15% and ~12% pass rates, flat across model generations |
-| Comments explain *why* | v3 §7.6 — restating-the-code comments are a top behavioural indicator |
-| No scaffolding in output | v3 §8.7 — leaked `contentReference` objects and `<think>` blocks are near-conclusive |
-| Match repo style | v3 §7.6 — style discontinuity across files is a review trigger |
-| Report honestly what ran | v3 §9 — chain of custody depends on accurate records of what was actually executed |
-| No AI attribution in git | §32.2 below |
-
-### 32.2 The attribution rule, and its honest limits
-
-**What is controllable:** commit trailers, PR footers, session deep links. `Co-Authored-By: Claude`, `🤖 Generated with [Claude Code]`, `Claude-Session: https://claude.ai/code/session_…`.
-
-**What is not:** the statistical text watermark. No opt-out exists. It is also close to irrelevant for code — v3 §4.3, entropy — and absent entirely from models released before 2 August 2026, which includes Opus 5.
-
-**Anyone claiming to "remove the Claude watermark" by stripping Unicode is removing copy-paste artifacts (v3 §8.5), not a watermark.**
-
-### 32.3 Why the enforcement layer has to be a git hook
-
-This is the same principle as v3 §7.3, and it now has direct evidence behind it.
-
-Multiple open issues on `anthropics/claude-code` report `includeCoAuthoredBy: false` and `attribution: {commit: "", pr: ""}` being ignored. Reported causes:
-
-- The model re-adds the trailer when building a commit message manually via the Bash tool, bypassing the code path that reads the setting.
-- The 

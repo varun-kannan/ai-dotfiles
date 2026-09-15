@@ -7,19 +7,19 @@ description: Determine whether text, code, images, audio, video, documents, or d
 
 Evidence-graded methods for establishing content provenance. Two reference files hold the detail; this file is the routing layer and the non-negotiable principles.
 
-> **Verification status.** Claude's text watermark, its 2 August 2026 start
-> date, the transition period for earlier models, and the gated detection API
-> were confirmed against Anthropic's own documentation on 2026-09-11. Claims
+> **Verification status (2026-09-15).** Checked against primary sources: Claude
+> watermark coverage and gated detection (Anthropic), Opus 5 release date (system
+> card), the EU 2 December 2026 deadline (Commission FAQ), the RAID FPR table
+> (paper Table 4), Turnitin's 20% threshold, and the Veracode figures. Claims
 > marked **[U]** in the reference files are unverified and must not be presented
-> as settled. Watermark coverage is per model version and goes stale; re-check
-> before relying on the model list below.
+> as settled. Model coverage goes stale; re-check it before relying on it.
 
 ## Start here — evidence tiers
 
 | Tier | Class | Establishes | Public tooling |
 |---|---|---|---|
 | **E1** | Cryptographic provenance (C2PA, signed attestation) | Strong | ✅ Free |
-| **E2** | Provider watermark | Strong | ⚠️ Images/audio yes; Claude text **no** |
+| **E2** | Provider watermark | Strong | ⚠️ Images/audio yes; Claude text gated to eligible orgs |
 | **E3** | Audit trail (version history, git log, agent logs) | Strong | ✅ Free |
 | **E4** | Verifiable content checks (phantom imports, dead DOIs, scaffolding) | Strong | ✅ Free |
 | **E5** | Detectors and stylometry | **Weak alone** | ⚠️ Unreliable |
@@ -30,7 +30,7 @@ Evidence-graded methods for establishing content provenance. Two reference files
 
 1. **A detected watermark proves involvement, not authorship** — it cannot separate "wrote" from "edited" from "translated." It can also be **spoofed** onto human text.
 2. **No watermark proves nothing.** Wrong model version, different vendor, open weights, paraphrased, too short, or metadata stripped.
-3. **Watermark coverage is per-model-version, not per-vendor.** Claude marks only models launched on/after 2 Aug 2026 — currently Fable 5.1 and Mythos 5.1. Opus 5, Sonnet 5, Haiku 4.5 are **not** marked.
+3. **Watermark coverage is per-model-version, not per-vendor.** Claude marks only models launched on/after 2 Aug 2026 — currently Fable 5.1 and Mythos 5.1. Opus 5, Sonnet 5, Haiku 4.5 are **not** marked. Anthropic gives no retrofit date; the EU deadline for pre-August-2026 systems is 2 Dec 2026.
 4. **Base rates decide everything.** A 1% FPR gives ~99% positive predictive value at 50% prevalence and ~32% at 0.5%. Compute PPV before acting on any score. See `forensics-core.md` §5.
 5. **Never accuse on style alone.** Every stylistic signal dies to one instruction or one paraphrase pass.
 6. **Absence of evidence is not evidence of absence.** Never state a tool or source doesn't exist based on a search you didn't run.
@@ -44,11 +44,15 @@ c2patool file.png
 exiftool -DigitalSourceType -Software -Description file.jpg
 # Free verifiers: openai.com/research/verify/ (images+audio) · claude.com/check-files
 
-# E4 — invisible characters (the locale prefix is REQUIRED)
+# E4 — invisible characters. GNU grep or ugrep only: stock macOS grep has no -P,
+# and without the locale prefix GNU grep fails silently. Portable version: core §8.5
 LC_ALL=C.UTF-8 grep -nP '[\x{00A0}\x{00AD}\x{200B}-\x{200F}\x{2028}\x{202F}\x{2060}\x{FEFF}]' file
 
 # E4 — phantom dependencies (strongest code signal)
-npm view <pkg> version ; pip index versions <pkg> ; cargo search <crate>
+PKG=left-pad
+npm view "$PKG" version
+python3 -m pip index versions "$PKG"
+cargo search "$PKG"
 
 # E3 — repository trail
 git log --all --numstat --format='%h %ad %an %s' --date=iso
