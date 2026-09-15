@@ -82,12 +82,18 @@ An existing non-empty `AGENTS.md` is backed up to `AGENTS.md.bak` first.
 | `commit-msg` | Strips AI attribution trailers |
 | `pre-commit` | Blocks hygiene violations in staged files |
 
-**Other agents.** Every folder under `agents/` is one agent. Gemini CLI
-(`~/.gemini/GEMINI.md`) and OpenCode (`~/.config/opencode/AGENTS.md`) are defined
-but skipped until installed; install either, re-run `./install.sh`, and it is
-covered. Cursor and Windsurf keep global rules in their app settings rather than
-a file, so they have no agent folder: paste `rules/paste-into-chat-ui.txt` there,
-or rely on a project-level `AGENTS.md`. See `README.md` for adding an agent.
+**Gemini CLI** (`~/.gemini/`) gets `GEMINI.md` and `skills/ai-content-forensics/`.
+**OpenCode** (`~/.config/opencode/`) gets `AGENTS.md`; it already reads skills
+from `~/.claude/skills/`, so no second copy. Both install even when the tool is
+not, so the rules are in place on first run.
+
+OpenCode limit: a project-level `AGENTS.md` takes priority, and the global file
+is not loaded in that project. Codex limit: global plus project `AGENTS.md`
+share a 32 KiB cap, and the global file already uses 15.7 KiB.
+
+Cursor and Windsurf keep global rules in their app settings rather than a file,
+so they have no agent folder: paste `rules/paste-into-chat-ui.txt` there, or rely
+on a project-level `AGENTS.md`. See `README.md` for adding an agent.
 
 ---
 
@@ -126,12 +132,25 @@ Expect the commit to be blocked with a curly-quote finding.
 
 ## App UIs with no config file
 
-ChatGPT.app and Claude.app take rules through their own settings, not a file.
-Paste everything below the marker line in `rules/paste-into-chat-ui.txt`
-(1,319 characters, within ChatGPT's 1,500 limit) into:
+ChatGPT and Claude chat take rules through account settings, not a file, so
+`agents/chatgpt-app/` and `agents/claude-app/` print the step on every install.
+The setting is per account: once saved, it applies to the desktop app, web and
+mobile. Copy the text with:
 
-- **ChatGPT** - Settings, Personalization, Custom instructions
-- **Claude** - Settings, Profile, personal preferences
+```bash
+sed -n '3,$p' rules/paste-into-chat-ui.txt | pbcopy
+```
+
+About 1,320 characters, which fits the smallest known limits:
+
+- **ChatGPT** - Settings, Personalization, Custom instructions, the "how should
+  ChatGPT respond" box. 1,500 characters on Free and Go, 5,000 on paid plans
+  (reported July 2026).
+- **Claude** - Settings, the personal preferences field. Guides report a 1,500
+  character limit; not confirmed on Anthropic's own pages.
+
+The Claude app's Code tab is Claude Code and is already covered by
+`agents/claude-code/`.
 
 This is instruction only. There is no enforcement layer inside a chat app; what
 you paste out of one still meets the git hooks.

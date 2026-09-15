@@ -21,10 +21,13 @@ rules/
   RULES.md                  the single source of truth
   paste-into-chat-ui.txt    condensed rules for ChatGPT / Claude app settings
 agents/
+  app-setup.sh              shared by the chat apps below
   claude-code/              agent.env, setup.sh, hooks/
   codex/                    agent.env
-  gemini-cli/               agent.env
-  opencode/                 agent.env
+  gemini-cli/               agent.env (installed even before Gemini CLI is)
+  opencode/                 agent.env (installed even before OpenCode is)
+  chatgpt-app/              agent.env, setup.sh (prints the paste step)
+  claude-app/               agent.env, setup.sh (prints the paste step)
 skills/
   ai-content-forensics/     SKILL.md + reference/
 bin/
@@ -42,7 +45,7 @@ INSTALL.md                  detail: layers, verification, limitations
 Create `agents/<name>/agent.env`:
 
 ```bash
-DETECT="$HOME/.mytool"               # skipped when this path does not exist
+DETECT="$HOME/.mytool"               # skipped when this path is missing; "" installs always
 RULES_FILE="$HOME/.mytool/AGENTS.md" # where the tool reads global instructions
 RULES_TITLE="AGENTS.md"
 SKILLS_DIR=""                        # set only if the tool loads SKILL.md folders
@@ -51,6 +54,11 @@ SKILLS_DIR=""                        # set only if the tool loads SKILL.md folde
 Anything more than rules and skills (hooks, settings) goes in an executable
 `agents/<name>/setup.sh`, which the installer runs with `AGENT_DIR` set. See
 `agents/claude-code/setup.sh`.
+
+For a tool whose instructions live in account settings rather than a file, leave
+`RULES_FILE` empty, set `APP_NAME` and `APP_SETTINGS`, and point `setup.sh` at
+`agents/app-setup.sh`, as `chatgpt-app/` does. The installer then prints what to
+paste and where.
 
 Check the tool's documentation for the real global instructions path before
 adding it. A rules file in a location the tool never reads does nothing.

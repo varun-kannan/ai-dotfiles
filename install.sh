@@ -29,6 +29,7 @@ write_rules() {  # $1 destination, $2 title
 }
 
 # Every agents/<name>/agent.env is one agent. Add a folder to add an agent.
+# setup.sh in that folder, if executable, runs after rules and skills.
 for env in "$SRC"/agents/*/agent.env; do
   AGENT_DIR="$(dirname "$env")"
   name="$(basename "$AGENT_DIR")"
@@ -37,11 +38,12 @@ for env in "$SRC"/agents/*/agent.env; do
   . "$env"
 
   echo
-  if [ -z "$DETECT" ] || [ ! -e "$DETECT" ]; then
+  # Empty DETECT installs unconditionally, so the rules are in place before the tool is.
+  if [ -n "$DETECT" ] && [ ! -e "$DETECT" ]; then
     echo "$name: not installed ($DETECT missing), skipped"
     continue
   fi
-  echo "$name -> $DETECT"
+  echo "$name${DETECT:+ -> $DETECT}"
 
   if [ -n "$RULES_FILE" ]; then
     write_rules "$RULES_FILE" "${RULES_TITLE:-Rules}"
