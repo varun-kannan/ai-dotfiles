@@ -221,3 +221,35 @@ artifacts, which are a different thing.
 - Re-run `./install.sh` after any edit, and after installing a new agent.
 - Re-verify volatile claims. Watermark coverage is per model version and goes
   stale on its own.
+
+## Harness layer: agents, commands, config, bootstrap
+
+What `install.sh` now installs beyond rules and skills:
+
+- Subagents (`agents/definitions/*.md`): copied to `~/.claude/agents/` by the claude-code setup. Seven agents: planner, code-reviewer, security-reviewer, tester, architect, performance-optimizer, documentation-guide.
+- Slash commands (`commands/*.md`): copied to `~/.claude/commands/`. Seven commands: `/plan`, `/review`, `/test`, `/security`, `/architecture`, `/optimize`, `/docs`.
+- Shared copies under `~/.ai-rules/`: `rules/` (domain rules), `skills/`, `agents/definitions/`, `config/` (budgets, relevance, skill metadata), and `bin/`.
+- Vendors: Cursor (paste step for user rules; project rules are `.cursor/rules/*.mdc` per repo), Hermes (skills to `~/.hermes/skills/`), Devin (reads `AGENTS.md` per repo; no local install).
+
+Vendor coverage is limited to what each tool supports. Slash commands and subagents are installed for Claude Code only.
+
+### Per project
+
+```bash
+~/.ai-rules/bin/ai-bootstrap init path/to/project
+~/.ai-rules/bin/ai-bootstrap plan --task "fix the failing login test" path/to/project
+```
+
+`init` creates `.harness/` (project config, project rules, memory files), `.logs/` (added to `.gitignore`), and `AGENTS.md`. It never overwrites an existing file.
+
+`plan` scores each agent, skill, and rule against the task and the detected project type, then fills the tier budget from `config/harness-budgets.json`. The tier comes from the model router unless `--tier` or `.harness/project-config.json` sets it.
+
+Project overrides go in `.harness/project-config.json`: `tier`, `exclude` (names never to load), and `pin` (names always to load).
+
+### Self-test
+
+```bash
+python3 ~/.ai-rules/bin/context-manager.py --self-test
+```
+
+Config files are JSON rather than YAML so the tools run without PyYAML.

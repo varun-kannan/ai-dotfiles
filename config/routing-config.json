@@ -1,0 +1,12 @@
+{
+  "_note": "Suggested model tier and token range per agent. Advisory: the router and the agent frontmatter set the actual model. Read by bin/context-manager.py for reporting only.",
+  "agents": {
+    "planner": {"complexity": "high", "suggested_model": "opus", "min_tokens": 3000, "max_tokens": 10000},
+    "code-reviewer": {"complexity": "medium", "suggested_model": "sonnet", "min_tokens": 2000, "max_tokens": 5000},
+    "security-reviewer": {"complexity": "high", "suggested_model": "opus", "min_tokens": 3000, "max_tokens": 8000},
+    "tester": {"complexity": "medium", "suggested_model": "sonnet", "min_tokens": 2000, "max_tokens": 5000},
+    "architect": {"complexity": "high", "suggested_model": "opus", "min_tokens": 3000, "max_tokens": 10000},
+    "performance-optimizer": {"complexity": "medium", "suggested_model": "sonnet", "min_tokens": 2000, "max_tokens": 6000},
+    "documentation-guide": {"complexity": "low", "suggested_model": "sonnet", "min_tokens": 1000, "max_tokens": 4000}
+  }
+}

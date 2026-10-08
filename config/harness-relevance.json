@@ -1,0 +1,399 @@
+{
+  "_note": "Weights for bin/context-manager.py. A candidate scores weight x tag hits from the task and project, plus priority. Lower-scored items are dropped first when a tier budget is exceeded.",
+  "priority_bonus": {
+    "high": 0.3,
+    "medium": 0.15,
+    "low": 0.0
+  },
+  "agents": {
+    "planner": {
+      "tags": [
+        "plan",
+        "design",
+        "feature",
+        "refactor",
+        "migration"
+      ],
+      "weight": 1.0,
+      "priority": "high"
+    },
+    "code-reviewer": {
+      "tags": [
+        "review",
+        "quality",
+        "diff",
+        "refactor",
+        "maintainability"
+      ],
+      "weight": 0.9,
+      "priority": "high"
+    },
+    "security-reviewer": {
+      "tags": [
+        "security",
+        "auth",
+        "input",
+        "secret",
+        "crypto",
+        "injection"
+      ],
+      "weight": 1.0,
+      "priority": "high"
+    },
+    "tester": {
+      "tags": [
+        "test",
+        "bug",
+        "coverage",
+        "tdd"
+      ],
+      "weight": 0.9,
+      "priority": "high"
+    },
+    "architect": {
+      "tags": [
+        "architecture",
+        "design",
+        "adr",
+        "scale",
+        "service"
+      ],
+      "weight": 0.8,
+      "priority": "medium"
+    },
+    "performance-optimizer": {
+      "tags": [
+        "performance",
+        "slow",
+        "latency",
+        "memory",
+        "query",
+        "cache"
+      ],
+      "weight": 0.8,
+      "priority": "medium"
+    },
+    "documentation-guide": {
+      "tags": [
+        "docs",
+        "readme",
+        "api",
+        "onboarding",
+        "runbook"
+      ],
+      "weight": 0.6,
+      "priority": "low"
+    }
+  },
+  "skills": {
+    "ai-content-forensics": {
+      "tags": [
+        "forensics",
+        "ai-generated",
+        "provenance",
+        "watermark",
+        "detector"
+      ],
+      "weight": 0.9,
+      "priority": "medium"
+    },
+    "model-router": {
+      "tags": [
+        "model",
+        "routing",
+        "cost",
+        "tokens"
+      ],
+      "weight": 0.8,
+      "priority": "medium"
+    },
+    "testing-guide": {
+      "tags": [
+        "test",
+        "tdd",
+        "coverage",
+        "mock"
+      ],
+      "weight": 0.8,
+      "priority": "high"
+    },
+    "security-review": {
+      "tags": [
+        "security",
+        "auth",
+        "owasp",
+        "input",
+        "secret"
+      ],
+      "weight": 1.0,
+      "priority": "high"
+    },
+    "api-design": {
+      "tags": [
+        "api",
+        "rest",
+        "graphql",
+        "openapi",
+        "endpoint"
+      ],
+      "weight": 0.7,
+      "priority": "medium"
+    },
+    "error-handling": {
+      "tags": [
+        "error",
+        "exception",
+        "retry",
+        "failure"
+      ],
+      "weight": 0.6,
+      "priority": "medium"
+    },
+    "performance-optimization": {
+      "tags": [
+        "performance",
+        "slow",
+        "profile",
+        "cache",
+        "query"
+      ],
+      "weight": 0.7,
+      "priority": "medium"
+    },
+    "git-workflow": {
+      "tags": [
+        "git",
+        "branch",
+        "commit",
+        "merge",
+        "pr"
+      ],
+      "weight": 0.6,
+      "priority": "medium"
+    },
+    "nodejs-patterns": {
+      "tags": [
+        "node",
+        "nodejs",
+        "express",
+        "npm"
+      ],
+      "weight": 0.7,
+      "priority": "medium"
+    },
+    "javascript-patterns": {
+      "tags": [
+        "javascript",
+        "js",
+        "node",
+        "browser"
+      ],
+      "weight": 0.6,
+      "priority": "medium"
+    },
+    "typescript-patterns": {
+      "tags": [
+        "typescript",
+        "ts",
+        "tsconfig",
+        "types"
+      ],
+      "weight": 0.7,
+      "priority": "medium"
+    },
+    "python-patterns": {
+      "tags": [
+        "python",
+        "py",
+        "pip",
+        "pyproject",
+        "django",
+        "fastapi"
+      ],
+      "weight": 0.7,
+      "priority": "medium"
+    },
+    "rust-patterns": {
+      "tags": [
+        "rust",
+        "cargo",
+        "crate"
+      ],
+      "weight": 0.7,
+      "priority": "medium"
+    },
+    "react-patterns": {
+      "tags": [
+        "react",
+        "jsx",
+        "hooks",
+        "frontend"
+      ],
+      "weight": 0.7,
+      "priority": "medium"
+    },
+    "java-patterns": {
+      "tags": [
+        "java",
+        "maven",
+        "gradle",
+        "spring"
+      ],
+      "weight": 0.7,
+      "priority": "medium"
+    },
+    "kotlin-patterns": {
+      "tags": [
+        "kotlin",
+        "coroutines",
+        "gradle",
+        "ktor"
+      ],
+      "weight": 0.7,
+      "priority": "medium"
+    },
+    "docker-patterns": {
+      "tags": [
+        "docker",
+        "container",
+        "dockerfile",
+        "compose"
+      ],
+      "weight": 0.6,
+      "priority": "low"
+    },
+    "ci-workflow": {
+      "tags": [
+        "ci",
+        "github-actions",
+        "pipeline",
+        "workflow"
+      ],
+      "weight": 0.6,
+      "priority": "low"
+    },
+    "deployment-patterns": {
+      "tags": [
+        "deploy",
+        "rollback",
+        "release",
+        "kubernetes"
+      ],
+      "weight": 0.5,
+      "priority": "low"
+    },
+    "database-patterns": {
+      "tags": [
+        "database",
+        "sql",
+        "migration",
+        "index",
+        "query",
+        "schema"
+      ],
+      "weight": 0.7,
+      "priority": "medium"
+    },
+    "code-review-guide": {
+      "tags": [
+        "review",
+        "checklist",
+        "pull-request"
+      ],
+      "weight": 0.6,
+      "priority": "low"
+    },
+    "accessibility-guide": {
+      "tags": [
+        "accessibility",
+        "a11y",
+        "wcag",
+        "aria"
+      ],
+      "weight": 0.5,
+      "priority": "low"
+    }
+  },
+  "rules": {
+    "security": {
+      "tags": [
+        "security"
+      ],
+      "weight": 1.0,
+      "always": true
+    },
+    "testing": {
+      "tags": [
+        "test",
+        "tests",
+        "bug",
+        "fix",
+        "refactor",
+        "feature",
+        "implement"
+      ],
+      "weight": 0.8
+    },
+    "nodejs": {
+      "tags": [
+        "nodejs",
+        "javascript",
+        "typescript",
+        "react"
+      ],
+      "weight": 0.7
+    },
+    "python": {
+      "tags": [
+        "python"
+      ],
+      "weight": 0.7
+    },
+    "java": {
+      "tags": [
+        "java"
+      ],
+      "weight": 0.7
+    },
+    "kotlin": {
+      "tags": [
+        "kotlin"
+      ],
+      "weight": 0.7
+    }
+  },
+  "memory": {
+    "architecture.md": {
+      "tags": [
+        "architecture",
+        "design",
+        "structure",
+        "module",
+        "service"
+      ],
+      "weight": 0.8,
+      "always": true
+    },
+    "known-issues.md": {
+      "tags": [
+        "bug",
+        "fix",
+        "error",
+        "fail",
+        "broken",
+        "debug"
+      ],
+      "weight": 0.9
+    },
+    "decisions.md": {
+      "tags": [
+        "decision",
+        "why",
+        "adr",
+        "choose",
+        "trade-off"
+      ],
+      "weight": 0.7
+    }
+  }
+}

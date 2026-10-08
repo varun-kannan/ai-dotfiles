@@ -17,7 +17,11 @@ echo "shared -> $SHARED"
 mkdir -p "$SHARED/bin"
 install -m 0755 "$SRC"/bin/* "$SHARED/bin/"
 install -m 0644 "$SRC/rules/RULES.md" "$SHARED/RULES.md"
-echo "  ok    bin/, RULES.md"
+# Generated copies the bin/ tools read. Rebuilt on every run.
+rm -rf "$SHARED/rules" "$SHARED/config" "$SHARED/skills" "$SHARED/agents"
+cp -R "$SRC/rules" "$SRC/config" "$SRC/skills" "$SHARED/"
+mkdir -p "$SHARED/agents" && cp -R "$SRC/agents/definitions" "$SHARED/agents/"
+echo "  ok    bin/, RULES.md, rules/, config/, skills/, agents/definitions/"
 
 write_rules() {  # $1 destination, $2 title
   mkdir -p "$(dirname "$1")"

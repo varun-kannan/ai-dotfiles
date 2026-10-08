@@ -19,7 +19,7 @@ Reasoning:
   - Code present: yes (+2 standard score)
   - Single-part task
 
-Recommendation: Use Sonnet 5 (claude-sonnet-5-20241022)
+Recommendation: Use Sonnet 5 (claude-sonnet-5-5)
 Current model: Opus 5 (overproviding)
 Potential savings: 80% tokens, $0.05 vs $0.25, 2x faster
 ```
@@ -85,7 +85,7 @@ VERDICT: OVERPROVIDED
   - Savings: $0.017 (94%)
 
 Recommendation: Re-run with Haiku 4.5
-  /model claude-haiku-4-5-20251001
+  /model claude-haiku-5-5
 ```
 
 ## Model Selection Workflow
@@ -164,7 +164,7 @@ Then re-run `./install.sh` to deploy the updated skill.
 
 A: You're right to override it. The router uses heuristics, not ML. If your task is simpler or more complex than the keywords suggest, manually set the model:
 ```bash
-/model claude-opus-5-20240729  # lock to Opus
+/model claude-opus-5-5  # lock to Opus
 ```
 
 **Q: How do I know token counts before running?**
@@ -179,7 +179,7 @@ A: Yes. The skill is optional. Just don't invoke it, and Claude Code uses whatev
 
 A: Set it globally:
 ```bash
-/model claude-opus-5-20240729
+/model claude-opus-5-5
 ```
 The router will note you're overproviding, but it won't force a switch.
 

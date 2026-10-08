@@ -1,11 +1,23 @@
 #!/usr/bin/env bash
-# Claude Code extras beyond rules and skills: write hooks, settings, permissions.
-# Called by install.sh with AGENT_DIR (this folder) exported.
+# Claude Code extras beyond rules and skills: write hooks, settings, permissions,
+# subagents and slash commands. Called by install.sh with AGENT_DIR (this folder) exported.
 set -euo pipefail
+SRC="$(cd "$AGENT_DIR/../.." && pwd)"
 
 mkdir -p "$HOME/.claude/hooks"
 install -m 0755 "$AGENT_DIR/hooks/pre-write-guard.sh"  "$HOME/.claude/hooks/pre-write-guard.sh"
 install -m 0755 "$AGENT_DIR/hooks/post-write-audit.sh" "$HOME/.claude/hooks/post-write-audit.sh"
+
+# Subagents (agents/definitions) and slash commands (commands/) are copied, not
+# linked, so a re-run replaces them. A same-named file you wrote yourself is overwritten.
+mkdir -p "$HOME/.claude/agents" "$HOME/.claude/commands"
+for f in "$SRC"/agents/definitions/*.md; do
+  install -m 0644 "$f" "$HOME/.claude/agents/$(basename "$f")"
+done
+for f in "$SRC"/commands/*.md; do
+  install -m 0644 "$f" "$HOME/.claude/commands/$(basename "$f")"
+done
+echo "  ok    subagents: $(ls "$SRC"/agents/definitions/*.md | wc -l | tr -d ' '), commands: $(ls "$SRC"/commands/*.md | wc -l | tr -d ' ')"
 
 python3 - "$HOME/.claude/settings.json" "$HOME/.claude" <<'PY'
 import json, os, sys

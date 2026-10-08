@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# ai-bootstrap - set up one project's harness layer.
+#
+#   ai-bootstrap init [DIR]              create .harness/, .logs/, AGENTS.md (default DIR: .)
+#   ai-bootstrap plan --task TEXT [DIR]  show which harness files would load for a task
+#
+# init never overwrites an existing file. Re-running it only fills in what is missing.
+set -euo pipefail
+
+SHARED="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CM="$SHARED/bin/context-manager.py"
+
+usage() {
+  echo "usage: ai-bootstrap init [DIR]"
+  echo "       ai-bootstrap plan --task TEXT [DIR]"
+  exit 3
+}
+
+# write FILE: create it from stdin only if it does not exist yet.
+write_new() {
+  if [ -e "$1" ]; then
+    echo "  keep  ${1#"$PROJECT"/}"
+  else
+    mkdir -p "$(dirname "$1")"
+    cat > "$1"
+    echo "  new   ${1#"$PROJECT"/}"
+  fi
+}
+
+init() {
+  local tags
+  tags="$(python3 "$CM" detect --project "$PROJECT" | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["project_tags"]))')"
+  echo "project $PROJECT"
+  echo "  tags  ${tags:-none detected}"
+
+  write_new "$PROJECT/.harness/project-config.json" <<EOF
+{
+  "_note": "Per-project overrides for bin/context-manager.py. tier: fast, standard, or frontier. exclude and pin take harness item names.",
+  "exclude": [],
+  "pin": []
+}
+EOF
+  write_new "$PROJECT/.harness/rules/PROJECT-RULES.md" <<'EOF'
+# Project rules
+
+Rules that apply only to this project. One rule per line. These override the global rules.
+EOF
+  write_new "$PROJECT/.harness/memory/architecture.md" <<'EOF'
+# Architecture
+
+Modules, data stores, and external services, and how they connect. Update when a design changes.
+EOF
+  write_new "$PROJECT/.harness/memory/decisions.md" <<'EOF'
+# Decisions
+
+One entry per decision: date, decision, reason, alternatives rejected.
+EOF
+  write_new "$PROJECT/.harness/memory/known-issues.md" <<'EOF'
+# Known issues
+
+Open bugs and workarounds: symptom, cause if known, workaround, and the issue link.
+EOF
+  write_new "$PROJECT/AGENTS.md" <<'EOF'
+# AGENTS.md
+
+Global rules: ~/.ai-rules/RULES.md. Read them first.
+Project rules: .harness/rules/PROJECT-RULES.md.
+Project memory: .harness/memory/ (architecture, decisions, known issues).
+
+Run ~/.ai-rules/bin/content-hygiene on every file you write.
+EOF
+
+  for d in sessions audit models-used; do
+    mkdir -p "$PROJECT/.logs/$d"
+    [ -e "$PROJECT/.logs/$d/.gitkeep" ] || : > "$PROJECT/.logs/$d/.gitkeep"
+  done
+  echo "  ok    .logs/{sessions,audit,models-used}"
+
+  if [ ! -f "$PROJECT/.gitignore" ] || ! grep -qx '.logs/' "$PROJECT/.gitignore"; then
+    printf '.logs/\n' >> "$PROJECT/.gitignore"
+    echo "  add   .logs/ to .gitignore"
+  else
+    echo "  keep  .logs/ already in .gitignore"
+  fi
+  echo "done"
+}
+
+[ $# -ge 1 ] || usage
+cmd="$1"; shift
+
+case "$cmd" in
+  init)
+    PROJECT="$(cd "${1:-.}" && pwd)"
+    init
+    ;;
+  plan)
+    task=""
+    PROJECT="$(pwd)"
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --task) task="${2:?--task needs text}"; shift 2 ;;
+        *) PROJECT="$(cd "$1" && pwd)"; shift ;;
+      esac
+    done
+    [ -n "$task" ] || usage
+    python3 "$CM" plan --project "$PROJECT" --task "$task"
+    ;;
+  *) usage ;;
+esac

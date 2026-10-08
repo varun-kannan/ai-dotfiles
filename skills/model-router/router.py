@@ -10,8 +10,8 @@ from collections import Counter
 # Model tiers with pricing and thresholds
 MODELS = {
     "fast": {
-        "name": "Claude Haiku 4.5",
-        "id": "claude-haiku-4-5-20251001",
+        "name": "Claude Haiku 5.5",
+        "id": "claude-haiku-5-5",
         "input_cost": 0.80,  # per 1M tokens
         "output_cost": 4.0,
         "token_budget": 2000,
@@ -19,8 +19,8 @@ MODELS = {
         "latency_ms": 300,
     },
     "standard": {
-        "name": "Claude Sonnet 5",
-        "id": "claude-sonnet-5-20241022",
+        "name": "Claude Sonnet 5.5",
+        "id": "claude-sonnet-5-5",
         "input_cost": 3.0,
         "output_cost": 15.0,
         "token_budget": 15000,
@@ -28,8 +28,8 @@ MODELS = {
         "latency_ms": 600,
     },
     "frontier": {
-        "name": "Claude Opus 5",
-        "id": "claude-opus-5-20240729",
+        "name": "Claude Opus 5.5",
+        "id": "claude-opus-5-5",
         "input_cost": 15.0,
         "output_cost": 75.0,
         "token_budget": 200000,

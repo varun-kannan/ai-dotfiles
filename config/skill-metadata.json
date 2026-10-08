@@ -1,0 +1,115 @@
+{
+  "_note": "Per-skill tier, cost, and relevance. cost is a label (low, medium); budgets use measured tokens from bin/context-manager.py measure. Only SKILL.md is counted toward the budget; reference files load on demand.",
+  "skills": {
+    "ai-content-forensics": {
+      "tier": "core",
+      "cost": "medium",
+      "relevance": "task-dependent"
+    },
+    "model-router": {
+      "tier": "core",
+      "cost": "low",
+      "relevance": "always"
+    },
+    "testing-guide": {
+      "tier": "universal",
+      "cost": "low",
+      "relevance": "code-changes"
+    },
+    "security-review": {
+      "tier": "universal",
+      "cost": "medium",
+      "relevance": "all-commits"
+    },
+    "api-design": {
+      "tier": "universal",
+      "cost": "low",
+      "relevance": "api-changes"
+    },
+    "error-handling": {
+      "tier": "universal",
+      "cost": "low",
+      "relevance": "code-changes"
+    },
+    "performance-optimization": {
+      "tier": "universal",
+      "cost": "low",
+      "relevance": "perf-tasks"
+    },
+    "git-workflow": {
+      "tier": "universal",
+      "cost": "low",
+      "relevance": "git-tasks"
+    },
+    "nodejs-patterns": {
+      "tier": "language",
+      "cost": "low",
+      "relevance": "nodejs-projects"
+    },
+    "javascript-patterns": {
+      "tier": "language",
+      "cost": "low",
+      "relevance": "js-projects"
+    },
+    "typescript-patterns": {
+      "tier": "language",
+      "cost": "low",
+      "relevance": "ts-projects"
+    },
+    "python-patterns": {
+      "tier": "language",
+      "cost": "low",
+      "relevance": "python-projects"
+    },
+    "rust-patterns": {
+      "tier": "language",
+      "cost": "low",
+      "relevance": "rust-projects"
+    },
+    "react-patterns": {
+      "tier": "language",
+      "cost": "low",
+      "relevance": "react-projects"
+    },
+    "java-patterns": {
+      "tier": "language",
+      "cost": "low",
+      "relevance": "java-projects"
+    },
+    "kotlin-patterns": {
+      "tier": "language",
+      "cost": "low",
+      "relevance": "kotlin-projects"
+    },
+    "docker-patterns": {
+      "tier": "infra",
+      "cost": "low",
+      "relevance": "container-projects"
+    },
+    "ci-workflow": {
+      "tier": "infra",
+      "cost": "low",
+      "relevance": "ci-tasks"
+    },
+    "deployment-patterns": {
+      "tier": "infra",
+      "cost": "low",
+      "relevance": "deploy-tasks"
+    },
+    "database-patterns": {
+      "tier": "infra",
+      "cost": "low",
+      "relevance": "db-tasks"
+    },
+    "code-review-guide": {
+      "tier": "infra",
+      "cost": "low",
+      "relevance": "review-tasks"
+    },
+    "accessibility-guide": {
+      "tier": "infra",
+      "cost": "low",
+      "relevance": "frontend-ui"
+    }
+  }
+}
