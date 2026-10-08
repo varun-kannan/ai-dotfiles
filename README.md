@@ -20,25 +20,62 @@ The installer is idempotent. Edit anything, run it again.
 rules/
   RULES.md                  the single source of truth
   paste-into-chat-ui.txt    condensed rules for ChatGPT / Claude app settings
+  domains/                  per-domain rules: security, testing, nodejs, python, java, kotlin
 agents/
   app-setup.sh              shared by the chat apps below
+  definitions/              seven subagents, installed to ~/.claude/agents
   claude-code/              agent.env, setup.sh, hooks/
   codex/                    agent.env
   gemini-cli/               agent.env (installed even before Gemini CLI is)
   opencode/                 agent.env (installed even before OpenCode is)
+  cursor/                   agent.env, setup.sh (prints the paste step)
+  hermes/                   agent.env (skills only)
+  devin/                    agent.env, setup.sh (repo AGENTS.md via ai-bootstrap)
   chatgpt-app/              agent.env, setup.sh (prints the paste step)
   claude-app/               agent.env, setup.sh (prints the paste step)
-skills/
-  ai-content-forensics/     SKILL.md + reference/
+commands/                   seven slash commands, installed to ~/.claude/commands
+skills/                     22 skills, one folder each with SKILL.md
+config/                     token budgets, skill relevance, skill metadata, routing (JSON)
 bin/
   content-hygiene           scanner: invisible chars, placeholders, scaffolding, prose tells
   check-deps                imports not declared in the project manifest
+  context-manager.py        picks which agents, skills and rules fit a task and tier budget
+  ai-bootstrap              init a project's .harness/, .logs/ and AGENTS.md
 hooks/git/
   pre-commit                blocks hygiene violations in staged files
   commit-msg                strips AI attribution trailers
 install.sh
 INSTALL.md                  detail: layers, verification, limitations
+docs/                       skill placement policy, agent specialization, command reference
 ```
+
+## Harness layer
+
+Subagents and slash commands work in Claude Code. Each subagent has one job, a
+tool list and a model; each slash command hands the request to one of them.
+
+| Command | Subagent |
+|---|---|
+| `/plan` | planner |
+| `/review` | code-reviewer |
+| `/test` | tester |
+| `/security` | security-reviewer |
+| `/architecture` | architect |
+| `/optimize` | performance-optimizer |
+| `/docs` | documentation-guide |
+
+Per project, `ai-bootstrap` sets up the project layer. It never overwrites a file:
+
+```bash
+~/.ai-rules/bin/ai-bootstrap init path/to/project
+~/.ai-rules/bin/ai-bootstrap plan --task "fix the failing login test" path/to/project
+```
+
+`plan` scores agents, skills and rules against the task and the detected project
+type, then fills the budget for the model tier. Projects override the tier, and
+exclude or pin items, in `.harness/project-config.json`.
+
+See `docs/` for the placement policy, agent roles and command reference.
 
 ## Adding an agent
 
@@ -65,10 +102,14 @@ adding it. A rules file in a location the tool never reads does nothing.
 
 ## Adding a skill
 
-Put a folder with a `SKILL.md` under `skills/`. The installer copies every skill
-into each agent that has a `SKILLS_DIR`. Reference material goes in the skill's
-own folder, and `SKILL.md` should tell the agent which file to read for which
-question.
+Put a folder with a `SKILL.md` under `skills/`. The frontmatter `name` must equal
+the folder name. The installer copies every skill into each agent that has a
+`SKILLS_DIR`. Reference material goes in the skill's own folder, and `SKILL.md`
+should tell the agent which file to read for which question.
+
+To make the loader select a skill, add it to `config/skill-metadata.json` and
+`config/harness-relevance.json`. Without the second entry it is never chosen.
+`docs/SKILL-PLACEMENT-POLICY.md` has the full steps.
 
 ## What is enforced, and what is only asked
 
@@ -84,7 +125,8 @@ the model follows the verification, honesty and attribution rules, and slips on
 prose style (em dashes, negation-reversal framing) and template placeholders in
 drafts. The hooks catch those once they reach a file or a commit.
 
-Run the scanner's own tests with `bin/content-hygiene --self-test`.
+Run the scanner's own tests with `bin/content-hygiene --self-test`, and the loader's
+with `python3 bin/context-manager.py --self-test`.
 
 ## Credits
 
