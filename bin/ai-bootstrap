@@ -1,22 +1,42 @@
 #!/usr/bin/env bash
-# ai-bootstrap - set up one project's harness layer.
+# ai-bootstrap - set up one project for every AI tool on this machine.
 #
-#   ai-bootstrap init [DIR]              create .harness/, .logs/, AGENTS.md (default DIR: .)
-#   ai-bootstrap plan --task TEXT [DIR]  show which harness files would load for a task
+#   ai-bootstrap init [--all-tools] [DIR]   fieldbook store, base-rules pointer, harness overrides
+#   ai-bootstrap plan --task TEXT [DIR]     show which harness files would load for a task
 #
-# init never overwrites an existing file. Re-running it only fills in what is missing.
+# Project memory and logs come from fieldbook: the bank in .fieldbook/bank/, task logs in
+# .fieldbook/logs/, the managed rules block in AGENTS.md, tool stubs and git hooks.
+# This script adds what fieldbook does not:
+#   - a block in AGENTS.md that points at the machine-wide base rules (the cascade)
+#   - .fieldbook/harness.json for loader overrides (tier, exclude, pin)
+#
+# init is safe to re-run. It never overwrites an existing file, and never uses bunx:
+# the npm package named "fieldbook" is not this project.
+#
+# FIELDBOOK_CMD overrides the binary. Default: ~/.fieldbook/bin/fieldbook, then PATH.
 set -euo pipefail
 
 SHARED="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CM="$SHARED/bin/context-manager.py"
 
 usage() {
-  echo "usage: ai-bootstrap init [DIR]"
+  echo "usage: ai-bootstrap init [--all-tools] [DIR]"
   echo "       ai-bootstrap plan --task TEXT [DIR]"
   exit 3
 }
 
-# write FILE: create it from stdin only if it does not exist yet.
+find_fieldbook() {
+  local c
+  for c in "${FIELDBOOK_CMD:-}" "$HOME/.fieldbook/bin/fieldbook" "$(command -v fieldbook || true)"; do
+    if [ -n "$c" ] && [ -f "$c" ] && [ -s "$c" ] && [ -x "$c" ]; then
+      echo "$c"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# write_new FILE: create it from stdin only when it does not exist yet.
 write_new() {
   if [ -e "$1" ]; then
     echo "  keep  ${1#"$PROJECT"/}"
@@ -27,61 +47,77 @@ write_new() {
   fi
 }
 
+run_fieldbook_init() {
+  local fb="$1" tmp
+  # fieldbook init copies the running binary onto ~/.fieldbook/bin/fieldbook. Run from that
+  # same path it empties itself, so run a throwaway copy instead.
+  tmp="$(mktemp -d)"
+  cp "$fb" "$tmp/fieldbook"
+  chmod 755 "$tmp/fieldbook"
+  local rc=0
+  (cd "$PROJECT" && "$tmp/fieldbook" init --yes ${ALL_TOOLS:+--all-tools}) || rc=$?
+  rm -rf "$tmp"
+  return "$rc"
+}
+
 init() {
+  if ! git -C "$PROJECT" rev-parse --show-toplevel >/dev/null 2>&1; then
+    echo "error: $PROJECT is not a git repository. Run git init there first." >&2
+    exit 3
+  fi
+
   local tags
   tags="$(python3 "$CM" detect --project "$PROJECT" | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["project_tags"]))')"
   echo "project $PROJECT"
   echo "  tags  ${tags:-none detected}"
 
-  write_new "$PROJECT/.harness/project-config.json" <<EOF
+  if [ -e "$PROJECT/.fieldbook/config.yml" ]; then
+    echo "  keep  .fieldbook (fieldbook store already exists)"
+  elif fb="$(find_fieldbook)"; then
+    echo "  run   fieldbook init --yes (binary: $fb)"
+    run_fieldbook_init "$fb" || { echo "error: fieldbook init failed" >&2; exit 1; }
+  else
+    echo "  warn  fieldbook not found. No project memory or logs were created."
+    echo "        Build it from your fieldbook checkout, or set FIELDBOOK_CMD, then re-run."
+  fi
+
+  write_new "$PROJECT/.fieldbook/harness.json" <<'EOF'
 {
-  "_note": "Per-project overrides for bin/context-manager.py. tier: fast, standard, or frontier. exclude and pin take harness item names.",
+  "_note": "Overrides for ~/.ai-rules/bin/context-manager.py. tier: fast, standard or frontier. exclude and pin take skill, agent or rule names.",
   "exclude": [],
   "pin": []
 }
 EOF
-  write_new "$PROJECT/.harness/rules/PROJECT-RULES.md" <<'EOF'
-# Project rules
 
-Rules that apply only to this project. One rule per line. These override the global rules.
-EOF
-  write_new "$PROJECT/.harness/memory/architecture.md" <<'EOF'
-# Architecture
+  python3 - "$PROJECT/AGENTS.md" <<'PY'
+import sys
+path = sys.argv[1]
+begin, end = "<!-- BEGIN ai-dotfiles:base -->", "<!-- END ai-dotfiles:base -->"
+body = """## Base rules (ai-dotfiles)
 
-Modules, data stores, and external services, and how they connect. Update when a design changes.
-EOF
-  write_new "$PROJECT/.harness/memory/decisions.md" <<'EOF'
-# Decisions
+Machine-wide rules are in ~/.ai-rules/RULES.md. Read them before changing anything.
+Where they conflict with this file or .fieldbook/bank/03-conventions.md, this project wins.
 
-One entry per decision: date, decision, reason, alternatives rejected.
-EOF
-  write_new "$PROJECT/.harness/memory/known-issues.md" <<'EOF'
-# Known issues
-
-Open bugs and workarounds: symptom, cause if known, workaround, and the issue link.
-EOF
-  write_new "$PROJECT/AGENTS.md" <<'EOF'
-# AGENTS.md
-
-Global rules: ~/.ai-rules/RULES.md. Read them first.
-Project rules: .harness/rules/PROJECT-RULES.md.
-Project memory: .harness/memory/ (architecture, decisions, known issues).
-
-Run ~/.ai-rules/bin/content-hygiene on every file you write.
-EOF
-
-  for d in sessions audit models-used; do
-    mkdir -p "$PROJECT/.logs/$d"
-    [ -e "$PROJECT/.logs/$d/.gitkeep" ] || : > "$PROJECT/.logs/$d/.gitkeep"
-  done
-  echo "  ok    .logs/{sessions,audit,models-used}"
-
-  if [ ! -f "$PROJECT/.gitignore" ] || ! grep -qx '.logs/' "$PROJECT/.gitignore"; then
-    printf '.logs/\n' >> "$PROJECT/.gitignore"
-    echo "  add   .logs/ to .gitignore"
-  else
-    echo "  keep  .logs/ already in .gitignore"
-  fi
+Domain rules for security, testing and each language are in ~/.ai-rules/rules/domains/.
+Apply the ones that match the change."""
+block = begin + "\n" + body + "\n" + end
+try:
+    text = open(path, encoding="utf-8").read()
+    existed = True
+except OSError:
+    text, existed = "# Agent rules\n\nInstructions for any AI agent working in this repository.\n", False
+if begin in text and end in text:
+    head, rest = text.split(begin, 1)
+    new = head + block + rest.split(end, 1)[1]
+    action = "keep" if new == text else "upd "
+else:
+    sep = "" if text.endswith("\n\n") else ("\n" if text.endswith("\n") else "\n\n")
+    new = text + sep + block + "\n"
+    action = "new " if not existed else "add "
+if new != text or not existed:
+    open(path, "w", encoding="utf-8").write(new)
+print("  %s  AGENTS.md (base-rules block)" % action)
+PY
   echo "done"
 }
 
@@ -90,7 +126,16 @@ cmd="$1"; shift
 
 case "$cmd" in
   init)
-    PROJECT="$(cd "${1:-.}" && pwd)"
+    ALL_TOOLS=""
+    PROJECT="."
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --all-tools) ALL_TOOLS=1; shift ;;
+        -*) usage ;;
+        *) PROJECT="$1"; shift ;;
+      esac
+    done
+    PROJECT="$(cd "$PROJECT" && pwd)"
     init
     ;;
   plan)

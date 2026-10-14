@@ -1,5 +1,5 @@
 {
-  "_note": "Weights for bin/context-manager.py. A candidate scores weight x tag hits from the task and project, plus priority. Lower-scored items are dropped first when a tier budget is exceeded.",
+  "_note": "Weights for bin/context-manager.py. A candidate scores weight x tag hits from the task and project, plus priority. Lower-scored items are dropped first when a tier budget is exceeded. memory maps to a fieldbook bank (.fieldbook/bank/); 00-overview.md is excluded because the project AGENTS.md already imports it.",
   "priority_bonus": {
     "high": 0.3,
     "medium": 0.15,
@@ -363,37 +363,72 @@
     }
   },
   "memory": {
-    "architecture.md": {
+    "01-architecture.md": {
       "tags": [
         "architecture",
         "design",
         "structure",
         "module",
-        "service"
+        "service",
+        "refactor"
       ],
-      "weight": 0.8,
+      "weight": 0.8
+    },
+    "02-stack.md": {
+      "tags": [
+        "dependency",
+        "install",
+        "build",
+        "version",
+        "stack",
+        "upgrade"
+      ],
+      "weight": 0.6
+    },
+    "03-conventions.md": {
+      "tags": [
+        "convention",
+        "style",
+        "naming",
+        "lint"
+      ],
+      "weight": 0.9,
       "always": true
     },
-    "known-issues.md": {
+    "04-decisions.md": {
+      "tags": [
+        "decision",
+        "why",
+        "adr",
+        "choose",
+        "design",
+        "refactor",
+        "replace",
+        "remove"
+      ],
+      "weight": 0.8
+    },
+    "05-glossary.md": {
+      "tags": [
+        "term",
+        "glossary",
+        "naming",
+        "rename"
+      ],
+      "weight": 0.4
+    },
+    "06-gotchas.md": {
       "tags": [
         "bug",
         "fix",
         "error",
         "fail",
         "broken",
-        "debug"
+        "debug",
+        "flaky",
+        "gotcha"
       ],
       "weight": 0.9
-    },
-    "decisions.md": {
-      "tags": [
-        "decision",
-        "why",
-        "adr",
-        "choose",
-        "trade-off"
-      ],
-      "weight": 0.7
     }
   }
 }

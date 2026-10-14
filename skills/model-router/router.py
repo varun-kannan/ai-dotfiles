@@ -12,8 +12,8 @@ MODELS = {
     "fast": {
         "name": "Claude Haiku 5.5",
         "id": "claude-haiku-5-5",
-        "input_cost": 0.80,  # per 1M tokens
-        "output_cost": 4.0,
+        "input_cost": 0.10,  # per 1M tokens, prompts up to 100K (0.50/2.50 beyond)
+        "output_cost": 0.50,
         "token_budget": 2000,
         "speed": "fastest",
         "latency_ms": 300,
@@ -21,8 +21,8 @@ MODELS = {
     "standard": {
         "name": "Claude Sonnet 5.5",
         "id": "claude-sonnet-5-5",
-        "input_cost": 3.0,
-        "output_cost": 15.0,
+        "input_cost": 2.0,
+        "output_cost": 10.0,
         "token_budget": 15000,
         "speed": "fast",
         "latency_ms": 600,
@@ -30,8 +30,8 @@ MODELS = {
     "frontier": {
         "name": "Claude Opus 5.5",
         "id": "claude-opus-5-5",
-        "input_cost": 15.0,
-        "output_cost": 75.0,
+        "input_cost": 4.0,
+        "output_cost": 20.0,
         "token_budget": 200000,
         "speed": "slower but most capable",
         "latency_ms": 1000,

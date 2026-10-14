@@ -4,7 +4,7 @@
 - Canonical source: `skills/<name>/SKILL.md` in this repo. Edit skills here only.
 - Shared copy: `~/.ai-rules/skills/`, written by `install.sh`. Used by the loader.
 - Per-tool copies: `install.sh` copies each skill into every vendor folder listed in `agents/*/agent.env` (`SKILLS_DIR`). Copies are replaced on every run, so edits made in a tool folder are lost.
-- Project-level skills are not loaded by the harness. Project customization goes in `.harness/rules/PROJECT-RULES.md` and `.harness/project-config.json`.
+- Project-level skills are not loaded by the harness. Project customization goes in the project's `AGENTS.md`, `.fieldbook/bank/03-conventions.md`, and `.fieldbook/harness.json`.
 
 ## Adding a skill
 1. Create `skills/<name>/SKILL.md` with frontmatter `name:` equal to the folder name and a `description:` that says when to use it.

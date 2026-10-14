@@ -240,16 +240,21 @@ Vendor coverage is limited to what each tool supports. Slash commands and subage
 ~/.ai-rules/bin/ai-bootstrap plan --task "fix the failing login test" path/to/project
 ```
 
-`init` creates `.harness/` (project config, project rules, memory files), `.logs/` (added to `.gitignore`), and `AGENTS.md`. It never overwrites an existing file.
+`init` runs `fieldbook init --yes` for the project memory (`.fieldbook/bank/`, task logs in `.fieldbook/logs/`, the rules block in `AGENTS.md`, tool stubs, and fieldbook's own git hooks). It then adds `.fieldbook/harness.json` and a base-rules block in `AGENTS.md`. It needs a git repository and a fieldbook binary (`~/.fieldbook/bin/fieldbook`, then `PATH`, or `FIELDBOOK_CMD`). It never overwrites an existing file and never uses `bunx`: the npm package named `fieldbook` is not this project. Without a fieldbook binary it still adds the two harness files and says memory was not created.
 
-`plan` scores each agent, skill, and rule against the task and the detected project type, then fills the tier budget from `config/harness-budgets.json`. The tier comes from the model router unless `--tier` or `.harness/project-config.json` sets it.
+`plan` scores each agent, skill, and rule against the task and the detected project type, then fills the tier budget from `config/harness-budgets.json`. The tier comes from the model router unless `--tier` or `.fieldbook/harness.json` sets it.
 
-Project overrides go in `.harness/project-config.json`: `tier`, `exclude` (names never to load), and `pin` (names always to load).
+Project overrides go in `.fieldbook/harness.json`: `tier`, `exclude` (names never to load), and `pin` (names always to load).
+
+### Model suggestions and the plan pointer (Claude Code)
+
+`install.sh` registers `prompt-route.py` as a `UserPromptSubmit` hook. When the current model looks much too big or too small for a prompt, it shows a `[model-router]` note to you only (no tokens). In a recognized project it also adds one short paragraph naming the domain rules, skills, and memory files the loader picked. It does not switch models. Turn it off with `touch ~/.ai-rules/router.off`. Details: `skills/model-router/reference.md`. How the base and project layers combine: `docs/CASCADE.md`.
 
 ### Self-test
 
 ```bash
 python3 ~/.ai-rules/bin/context-manager.py --self-test
+python3 ~/.claude/hooks/prompt-route.py --self-test
 ```
 
 Config files are JSON rather than YAML so the tools run without PyYAML.

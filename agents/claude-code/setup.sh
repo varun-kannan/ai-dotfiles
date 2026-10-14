@@ -7,6 +7,7 @@ SRC="$(cd "$AGENT_DIR/../.." && pwd)"
 mkdir -p "$HOME/.claude/hooks"
 install -m 0755 "$AGENT_DIR/hooks/pre-write-guard.sh"  "$HOME/.claude/hooks/pre-write-guard.sh"
 install -m 0755 "$AGENT_DIR/hooks/post-write-audit.sh" "$HOME/.claude/hooks/post-write-audit.sh"
+install -m 0755 "$AGENT_DIR/hooks/prompt-route.py"     "$HOME/.claude/hooks/prompt-route.py"
 
 # Subagents (agents/definitions) and slash commands (commands/) are copied, not
 # linked, so a re-run replaces them. A same-named file you wrote yourself is overwritten.
@@ -41,16 +42,19 @@ hooks = cfg.setdefault("hooks", {})
 for event, matcher, script, timeout in [
     ("PreToolUse",  "Write|Edit|NotebookEdit", "pre-write-guard.sh",  15),
     ("PostToolUse", "Write|Edit",              "post-write-audit.sh", 20),
+    ("UserPromptSubmit", None,                 "prompt-route.py",     10),  # no matcher support
 ]:
     cmd = os.path.join(dest, "hooks", script)
     groups = hooks.setdefault(event, [])
     groups[:] = [g for g in groups
                  if not any(script in (h.get("command") or "") for h in g.get("hooks", []))]
-    groups.append({"matcher": matcher,
-                   "hooks": [{"type": "command", "command": cmd, "timeout": timeout}]})
+    group = {"hooks": [{"type": "command", "command": cmd, "timeout": timeout}]}
+    if matcher:
+        group["matcher"] = matcher
+    groups.append(group)
 
 with open(path, "w") as fh:
     json.dump(cfg, fh, indent=2)
     fh.write("\n")
 PY
-echo "  ok    hooks, settings.json (hooks, Read(~/.claude/skills/**), attribution flag)"
+echo "  ok    hooks (write guard, write audit, prompt-route), settings.json"

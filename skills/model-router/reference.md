@@ -1,199 +1,58 @@
-# Model Router — Setup & Implementation Guide
+# Model router reference
 
-## Quick Start
+## Pieces
 
-### 1. Check complexity of your current task (before running it)
+| File | Role |
+|---|---|
+| `skills/model-router/router.py` | scoring and cost comparison. `analyze_complexity(task)` and `suggest_rerun(...)` |
+| `agents/claude-code/hooks/prompt-route.py` | the `UserPromptSubmit` hook. Installed to `~/.claude/hooks/` |
+| `bin/context-manager.py` | picks rules, skills, agents, and memory within the tier budget. The hook calls it |
+| `config/harness-budgets.json` | token budget per tier |
 
-In any Claude Code session:
-```
-What model should I use for: "Refactor this function to reduce complexity"
-```
+## What the hook does on a prompt
 
-The model-router skill analyzes it and suggests the tier. Output:
+1. Skips when disabled, when the prompt is under 20 characters, or when it starts with `/`.
+2. Finds the current model: last assistant message in `transcript_path`. No assistant message yet means no model suggestion.
+3. Scores the prompt with `analyze_complexity`. The confidence is the top score minus the runner-up. Below 2, no suggestion.
+4. A suggestion needs a different tier than the current model, and is throttled to once per 5 prompts. A cheaper-model suggestion is dropped for prompts over 1,500 characters.
+5. Runs the loader for the current directory with the current model's tier. If the directory is a recognized project and the selection changed since the last prompt in this session, it adds one short paragraph of context. The paragraph names files; it does not paste them.
+6. Appends one line to `~/.ai-rules/logs/routing.jsonl`: time, session, project folder name, model, tiers, confidence, whether a suggestion or paragraph was shown, and the prompt length.
 
-```
-ANALYSIS:
-Detected complexity: STANDARD (Sonnet 5)
-Reasoning:
-  - Keywords: "refactor" (standard work)
-  - Code present: yes (+2 standard score)
-  - Single-part task
+The note is a `systemMessage`, shown to the user and not sent to the model. The context paragraph is `additionalContext`, which is sent to the model, so it is kept to a few lines and only repeated when the selection changes.
 
-Recommendation: Use Sonnet 5 (claude-sonnet-5-5)
-Current model: Opus 5 (overproviding)
-Potential savings: 80% tokens, $0.05 vs $0.25, 2x faster
-```
+## What it does not do
 
-### 2. Auto-routing with a hook (optional, advanced)
+- It does not switch models. The documented `UserPromptSubmit` outputs are added context, a block, and a user message; none changes the model.
+- It does not read token usage. A post-task cost check is manual (`router.py suggest`), because exact counts exist only after a response.
+- It does not learn. Scores come from the keyword lists in `router.py`.
 
-To automatically switch models before each task, add this hook to `~/.claude/settings.json`:
+## Tuning
 
-```json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "^Claude response starts",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/path/to/model-router-pre-hook.sh",
-            "timeout": 5
-          }
-        ]
-      }
-    ]
-  }
-}
+- Keyword lists: `FAST_KEYWORDS`, `STANDARD_KEYWORDS`, `FRONTIER_KEYWORDS` in `router.py`.
+- Sensitivity: `MIN_CONFIDENCE` in the hook. Raise it for fewer notes.
+- Frequency: `SUGGEST_EVERY` in the hook.
+- Budgets per tier: `config/harness-budgets.json`.
+- Per-project overrides: `.fieldbook/harness.json` with `tier`, `exclude`, and `pin`.
+
+After editing, run `./install.sh` so the copies in `~/.claude`, `~/.ai-rules`, and the other tools update. New Claude Code sessions pick up hook changes.
+
+## Checks
+
+```bash
+python3 ~/.claude/hooks/prompt-route.py --self-test
+python3 ~/.ai-rules/bin/context-manager.py --self-test
 ```
 
-The hook:
-- Receives your task from stdin
-- Calls `router.py analyze`
-- Switches the model if needed
-- Outputs a note: "Routing to Sonnet 5 for this task"
+Feed the hook a prompt by hand:
 
-**Note:** Claude Code's hook system has limitations. For now, **manual invocation is more reliable**:
-
-```
-# Before a task, ask:
-/model-router analyze "your task here"
-
-# After a response, ask:
-Check if this used the right model
+```bash
+echo '{"prompt":"format this json list and sort the keys then validate it","cwd":"'"$PWD"'","session_id":"manual"}' | python3 ~/.claude/hooks/prompt-route.py
 ```
 
-### 3. Post-task analysis (after any response)
-
-After Claude completes a response, you can ask:
-```
-Analyze the tokens used: was this the right model?
-```
-
-Output (example):
-```
-RESPONSE ANALYSIS:
-Task: "Format a JSON file"
-Tokens used: 1,200 input, 180 output (total: 1,380)
-Model used: Opus 5
-Complexity detected: FAST (should be Haiku)
-
-VERDICT: OVERPROVIDED
-  - Task is classification/formatting (Haiku level)
-  - Opus cost: $0.018
-  - Haiku cost: $0.001
-  - Savings: $0.017 (94%)
-
-Recommendation: Re-run with Haiku 4.5
-  /model claude-haiku-5-5
-```
-
-## Model Selection Workflow
-
-```
-┌─ Task arrives
-│
-├─→ Ask: "What model for this?"
-│   (or invoke /model-router analyze "task")
-│
-├─→ Router suggests tier
-│   (fast / standard / frontier)
-│
-├─→ Manually: /model <suggested-model-id>
-│   (or hook auto-switches)
-│
-├─→ Task runs
-│
-└─→ After response, ask:
-    "Check if this used the right model"
-    (suggests re-run if better option exists)
-```
-
-## Token Savings Examples
-
-| Task | Current | Best | Savings |
-|---|---|---|---|
-| "Format JSON" | Opus: 1.4K tokens, $0.018 | Haiku: 140 tokens, $0.001 | 90% |
-| "Write function" | Opus: 8K tokens, $0.12 | Sonnet: 8K tokens, $0.03 | 75% |
-| "Design system" | Sonnet: 15K tokens, $0.045 | Opus: 15K tokens, $0.225 | (stay Opus) |
-
-## When to use each model
-
-### Haiku 4.5 (fast, cheapest)
-- ✅ Formatting, parsing, validation
-- ✅ Classifying text or data
-- ✅ Simple extraction
-- ❌ Complex logic, design, strategy
-- Token limit: ~2,000 before slowdown
-
-### Sonnet 5 (balanced)
-- ✅ Most coding tasks, refactoring, testing
-- ✅ Debugging and explaining code
-- ✅ Moderate multi-step reasoning
-- ❌ Deep system design, novel problems
-- Token limit: ~15,000 optimal range
-
-### Opus 5 (frontier, most capable)
-- ✅ Complex architecture and design
-- ✅ Novel problems, research
-- ✅ Deep reasoning across many domains
-- ✅ Large codebases, detailed analysis
-- ❌ Overkill for simple tasks
-- Token limit: 200,000 (highest)
-
-## Advanced: Custom Complexity Rules
-
-Edit `router.py` to customize keyword scoring:
-
-```python
-# Add your own keywords
-FRONTIER_KEYWORDS = [
-    "design", "architect", "strategy",
-    "YOUR_KEYWORD_HERE",  # custom signal
-]
-
-# Or modify token budgets per domain
-MODELS["frontier"]["token_budget"] = 100000  # for your use case
-```
-
-Then re-run `./install.sh` to deploy the updated skill.
+With no transcript there is no model, so only the context paragraph can appear.
 
 ## Troubleshooting
 
-**Q: The router suggests a model but I disagree**
-
-A: You're right to override it. The router uses heuristics, not ML. If your task is simpler or more complex than the keywords suggest, manually set the model:
-```bash
-/model claude-opus-5-5  # lock to Opus
-```
-
-**Q: How do I know token counts before running?**
-
-A: You can't — only Claude knows after running. That's why post-task analysis is useful. After the first run, you'll know if you need a re-run on a cheaper model.
-
-**Q: Can I disable the router?**
-
-A: Yes. The skill is optional. Just don't invoke it, and Claude Code uses whatever model you've set globally (default: Opus).
-
-**Q: What if I always want Opus?**
-
-A: Set it globally:
-```bash
-/model claude-opus-5-5
-```
-The router will note you're overproviding, but it won't force a switch.
-
-## Integration with ai-dotfiles
-
-The model-router skill is part of your ai-dotfiles repo. It's installed to:
-- `~/.claude/skills/model-router/` (Claude Code)
-- `~/.codex/skills/model-router/` (Codex, if installed)
-
-To update it:
-```bash
-cd ~/Documents/ai-dotfiles
-# Edit skills/model-router/router.py or SKILL.md
-./install.sh
-```
-
-Changes take effect immediately in new sessions.
+- No notes ever appear: check `~/.claude/settings.json` has a `UserPromptSubmit` entry for `prompt-route.py`, that `~/.ai-rules/router.off` does not exist, and read `~/.ai-rules/logs/routing.jsonl` to see what the hook decided.
+- Notes seem wrong: the heuristic is keyword based. Raise `MIN_CONFIDENCE` or ignore the note.
+- Too many context paragraphs: the selection changes with the prompt. Pin or exclude items in `.fieldbook/harness.json`.

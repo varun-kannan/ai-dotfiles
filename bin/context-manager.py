@@ -14,8 +14,9 @@ Usage:
     context-manager.py measure
     context-manager.py --self-test
 
-Project overrides: DIR/.harness/project-config.json may set "tier", "exclude"
-(list of names to never load) and "pin" (list of names to always load).
+Project memory is a fieldbook bank (DIR/.fieldbook/bank/). Overrides live in
+DIR/.fieldbook/harness.json: "tier", "exclude" (names never to load) and "pin"
+(names always to load).
 
 Exit: 0 ok, 1 self-test failed, 3 usage or config error.
 """
@@ -119,13 +120,11 @@ def candidates(project, words, project_tags):
     for name, entry in RELEVANCE["rules"].items():
         path = BASE / "rules" / "domains" / (name + ".md")
         out.append(("rules", name, path, entry, file_tokens(path) if path.exists() else 0))
-    harness = project / ".harness"
+    bank = project / ".fieldbook" / "bank"
     for name, entry in RELEVANCE["memory"].items():
-        path = harness / "memory" / name
+        path = bank / name
         if path.exists():
             out.append(("memory", name, path, entry, file_tokens(path)))
-    for path in sorted((harness / "rules").glob("*.md")) if (harness / "rules").is_dir() else []:
-        out.append(("rules", "project:" + path.name, path, {"pinned": True}, file_tokens(path)))
     return out
 
 
@@ -153,7 +152,7 @@ def load_router():
 
 def plan(task, project, tier_flag="auto"):
     project = Path(project).resolve()
-    project_cfg_path = project / ".harness" / "project-config.json"
+    project_cfg_path = project / ".fieldbook" / "harness.json"
     try:
         project_cfg = load_json(project_cfg_path) if project_cfg_path.exists() else {}
     except (OSError, ValueError) as exc:
@@ -245,12 +244,16 @@ def self_test():
         check("testing-guide selected for test task", "testing-guide" in names)
         check("budget not exceeded", result["used"]["total"] <= result["budget"]["total"])
 
-        (proj / ".harness").mkdir()
-        (proj / ".harness" / "project-config.json").write_text(
+        (proj / ".fieldbook" / "bank").mkdir(parents=True)
+        (proj / ".fieldbook" / "bank" / "06-gotchas.md").write_text("gotcha\n" * 20, encoding="utf-8")
+        (proj / ".fieldbook" / "bank" / "00-overview.md").write_text("overview\n", encoding="utf-8")
+        (proj / ".fieldbook" / "harness.json").write_text(
             json.dumps({"exclude": ["testing-guide"]}), encoding="utf-8")
         result = plan("fix a failing test", proj, tier_flag="standard")
         names = [i["name"] for c in result["selected"].values() for i in c]
         check("exclude honored", "testing-guide" not in names)
+        check("gotchas memory selected for a fix task", "06-gotchas.md" in names)
+        check("overview never double-loaded", "00-overview.md" not in names)
 
         result = plan("fix a failing test", proj, tier_flag="fast")
         check("fast tier total within budget", result["used"]["total"] <= result["budget"]["total"])

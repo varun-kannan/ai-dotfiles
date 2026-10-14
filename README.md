@@ -40,7 +40,7 @@ bin/
   content-hygiene           scanner: invisible chars, placeholders, scaffolding, prose tells
   check-deps                imports not declared in the project manifest
   context-manager.py        picks which agents, skills and rules fit a task and tier budget
-  ai-bootstrap              init a project's .harness/, .logs/ and AGENTS.md
+  ai-bootstrap              set up a project: fieldbook memory, base-rules block, overrides
 hooks/git/
   pre-commit                blocks hygiene violations in staged files
   commit-msg                strips AI attribution trailers
@@ -73,9 +73,15 @@ Per project, `ai-bootstrap` sets up the project layer. It never overwrites a fil
 
 `plan` scores agents, skills and rules against the task and the detected project
 type, then fills the budget for the model tier. Projects override the tier, and
-exclude or pin items, in `.harness/project-config.json`.
+exclude or pin items, in `.fieldbook/harness.json`. Project memory and logs come from
+fieldbook; `init` calls it for you.
 
-See `docs/` for the placement policy, agent roles and command reference.
+In Claude Code a `UserPromptSubmit` hook (`prompt-route.py`) shows a `[model-router]` note
+when the current model looks much too big or too small for a prompt, and adds one short
+paragraph naming the rules, skills and memory files the loader picked. It suggests only;
+it does not switch models. `touch ~/.ai-rules/router.off` turns it off.
+
+See `docs/` for the placement policy, agent roles, command reference and the base/project cascade.
 
 ## Adding an agent
 
