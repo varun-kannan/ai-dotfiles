@@ -21,6 +21,7 @@ rules/
   RULES.md                  the single source of truth
   paste-into-chat-ui.txt    condensed rules for ChatGPT / Claude app settings
   domains/                  per-domain rules: security, testing, nodejs, python, java, kotlin
+  detail/                   long sections of RULES.md, loaded only when the core points to them
 agents/
   app-setup.sh              shared by the chat apps below
   definitions/              seven subagents, installed to ~/.claude/agents
@@ -30,17 +31,20 @@ agents/
   opencode/                 agent.env (installed even before OpenCode is)
   cursor/                   agent.env, setup.sh (prints the paste step)
   hermes/                   agent.env (skills only)
-  devin/                    agent.env, setup.sh (repo AGENTS.md via ai-bootstrap)
+  devin/                    agent.env, setup.sh (repo AGENTS.md, written by the engine)
   chatgpt-app/              agent.env, setup.sh (prints the paste step)
   claude-app/               agent.env, setup.sh (prints the paste step)
 commands/                   seven slash commands, installed to ~/.claude/commands
 skills/                     22 skills, one folder each with SKILL.md
-config/                     token budgets, skill relevance, skill metadata, routing (JSON)
+config/                     token budgets, relevance, decisions, project rules (JSON)
+engine/                     project engine: detection, decisions, generation, doctor
+shell/                      zsh cd trigger
+tests/                      engine tests
 bin/
   content-hygiene           scanner: invisible chars, placeholders, scaffolding, prose tells
   check-deps                imports not declared in the project manifest
   context-manager.py        picks which agents, skills and rules fit a task and tier budget
-  ai-bootstrap              set up a project: fieldbook memory, base-rules block, overrides
+  harness                   project engine CLI: status, doctor, init, remove, plan, eval, learn
 hooks/git/
   pre-commit                blocks hygiene violations in staged files
   commit-msg                strips AI attribution trailers
@@ -64,22 +68,18 @@ tool list and a model; each slash command hands the request to one of them.
 | `/optimize` | performance-optimizer |
 | `/docs` | documentation-guide |
 
-Per project, `ai-bootstrap` sets up the project layer. It never overwrites a file:
+Every project is set up automatically: open a Claude Code session in it, `cd` into it,
+or clone it. The engine writes a capped block into `AGENTS.md` with the stack, the
+project's real commands and do's and don'ts, adds fieldbook memory once git exists,
+logs its own changes to `.harness/CHANGELOG.md`, and regenerates when the stack changes.
+Home, container folders, `~/.ai-rules/harness-exclude` and `.harness-skip` are left
+alone. `harness status`, `harness doctor` and `harness remove` are for looking and
+overriding. Details: `docs/ENGINE.md`.
 
-```bash
-~/.ai-rules/bin/ai-bootstrap init path/to/project
-~/.ai-rules/bin/ai-bootstrap plan --task "fix the failing login test" path/to/project
-```
-
-`plan` scores agents, skills and rules against the task and the detected project
-type, then fills the budget for the model tier. Projects override the tier, and
-exclude or pin items, in `.fieldbook/harness.json`. Project memory and logs come from
-fieldbook; `init` calls it for you.
-
-In Claude Code a `UserPromptSubmit` hook (`prompt-route.py`) shows a `[model-router]` note
-when the current model looks much too big or too small for a prompt, and adds one short
-paragraph naming the rules, skills and memory files the loader picked. It suggests only;
-it does not switch models. `touch ~/.ai-rules/router.off` turns it off.
+In Claude Code the prompt hook can show a `[model-router]` note when the model looks much
+too big or too small, and can name rules, skills or memory that fit a task. Both go through
+the decision engine, which logs each choice and recalibrates from what you actually did.
+It suggests only; it does not switch models. `touch ~/.ai-rules/router.off` turns it off.
 
 See `docs/` for the placement policy, agent roles, command reference and the base/project cascade.
 
@@ -131,8 +131,9 @@ the model follows the verification, honesty and attribution rules, and slips on
 prose style (em dashes, negation-reversal framing) and template placeholders in
 drafts. The hooks catch those once they reach a file or a commit.
 
-Run the scanner's own tests with `bin/content-hygiene --self-test`, and the loader's
-with `python3 bin/context-manager.py --self-test`.
+Run the scanner's own tests with `bin/content-hygiene --self-test`, the loader's with
+`python3 bin/context-manager.py --self-test`, and the engine's with
+`python3 -m unittest discover -s tests`.
 
 ## Credits
 

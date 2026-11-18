@@ -14,9 +14,9 @@ Usage:
     context-manager.py measure
     context-manager.py --self-test
 
-Project memory is a fieldbook bank (DIR/.fieldbook/bank/). Overrides live in
-DIR/.fieldbook/harness.json: "tier", "exclude" (names never to load) and "pin"
-(names always to load).
+Project memory is a fieldbook bank (DIR/.fieldbook/bank/). Optional overrides
+live in DIR/.harness/config.json: "tier", "exclude" (names never to load) and
+"pin" (names always to load).
 
 Exit: 0 ok, 1 self-test failed, 3 usage or config error.
 """
@@ -33,21 +33,8 @@ BASE = Path(__file__).resolve().parent.parent
 CONFIG = BASE / "config"
 TOKENS_PER_CHAR = 0.25  # chars/4 estimate; a rough guide, not a tokenizer
 
-LANG_FILES = {
-    "package.json": ["nodejs"],
-    "tsconfig.json": ["typescript"],
-    "pyproject.toml": ["python"],
-    "requirements.txt": ["python"],
-    "setup.py": ["python"],
-    "Cargo.toml": ["rust"],
-    "pom.xml": ["java"],
-    "build.gradle": ["java"],
-    "build.gradle.kts": ["kotlin"],
-    "Dockerfile": ["docker"],
-    "docker-compose.yml": ["docker"],
-    "compose.yaml": ["docker"],
-}
-DB_DIRS = ("migrations", "prisma", "alembic")
+sys.path.insert(0, str(BASE))
+from engine.project import detect_tags  # noqa: E402
 
 
 def load_json(path):
@@ -56,29 +43,7 @@ def load_json(path):
 
 
 def detect(project):
-    tags = set()
-    for name, found in LANG_FILES.items():
-        if (project / name).exists():
-            tags.update(found)
-    pkg_path = project / "package.json"
-    if pkg_path.exists():
-        try:
-            pkg = load_json(pkg_path)
-        except (OSError, ValueError):
-            pkg = {}
-        deps = dict(pkg.get("dependencies", {}))
-        deps.update(pkg.get("devDependencies", {}))
-        if "react" in deps:
-            tags.add("react")
-        if "typescript" in deps:
-            tags.add("typescript")
-    if "nodejs" in tags and "typescript" not in tags:
-        tags.add("javascript")
-    if (project / ".github" / "workflows").is_dir():
-        tags.add("ci")
-    if any((project / d).is_dir() for d in DB_DIRS):
-        tags.add("database")
-    return sorted(tags)
+    return detect_tags(project)
 
 
 def tokens_for_chars(chars):
@@ -152,7 +117,7 @@ def load_router():
 
 def plan(task, project, tier_flag="auto"):
     project = Path(project).resolve()
-    project_cfg_path = project / ".fieldbook" / "harness.json"
+    project_cfg_path = project / ".harness" / "config.json"
     try:
         project_cfg = load_json(project_cfg_path) if project_cfg_path.exists() else {}
     except (OSError, ValueError) as exc:
@@ -247,7 +212,8 @@ def self_test():
         (proj / ".fieldbook" / "bank").mkdir(parents=True)
         (proj / ".fieldbook" / "bank" / "06-gotchas.md").write_text("gotcha\n" * 20, encoding="utf-8")
         (proj / ".fieldbook" / "bank" / "00-overview.md").write_text("overview\n", encoding="utf-8")
-        (proj / ".fieldbook" / "harness.json").write_text(
+        (proj / ".harness").mkdir()
+        (proj / ".harness" / "config.json").write_text(
             json.dumps({"exclude": ["testing-guide"]}), encoding="utf-8")
         result = plan("fix a failing test", proj, tier_flag="standard")
         names = [i["name"] for c in result["selected"].values() for i in c]

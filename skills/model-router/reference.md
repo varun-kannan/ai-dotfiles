@@ -12,13 +12,13 @@
 ## What the hook does on a prompt
 
 1. Skips when disabled, when the prompt is under 20 characters, or when it starts with `/`.
-2. Finds the current model: last assistant message in `transcript_path`. No assistant message yet means no model suggestion.
-3. Scores the prompt with `analyze_complexity`. The confidence is the top score minus the runner-up. Below 2, no suggestion.
-4. A suggestion needs a different tier than the current model, and is throttled to once per 5 prompts. A cheaper-model suggestion is dropped for prompts over 1,500 characters.
-5. Runs the loader for the current directory with the current model's tier. If the directory is a recognized project and the selection changed since the last prompt in this session, it adds one short paragraph of context. The paragraph names files; it does not paste them.
-6. Appends one line to `~/.ai-rules/logs/routing.jsonl`: time, session, project folder name, model, tiers, confidence, whether a suggestion or paragraph was shown, and the prompt length.
+2. Keeps the project setup current (`engine/generate.py`). A block generated or changed mid-session is passed to Claude once.
+3. Finds the current model from the last assistant message in `transcript_path`, or the model recorded at session start.
+4. Picks a tier with the `model_tier` question. When it differs from the current model, the `model_suggestion_useful` question decides whether to show the note. Its signals: the score gap, and penalties for a cheaper model late in a session (switching then discards the prompt cache) or for a long prompt. At most once per 5 prompts.
+5. Asks the loader which rules, skills, agents and memory this prompt's own words add beyond the project baseline, minus anything named earlier in the session. The `pointer_useful` question decides whether to add that note.
+6. Logs to `~/.ai-rules/logs/routing.jsonl` (no prompt text). Every decision also lands in `decisions.jsonl` for calibration.
 
-The note is a `systemMessage`, shown to the user and not sent to the model. The context paragraph is `additionalContext`, which is sent to the model, so it is kept to a few lines and only repeated when the selection changes.
+The model note is a `systemMessage`, shown to you and not sent to the model. The task note is `additionalContext`, which is sent to the model, so it is gated and never repeats an item within a session.
 
 ## What it does not do
 
@@ -29,10 +29,10 @@ The note is a `systemMessage`, shown to the user and not sent to the model. The 
 ## Tuning
 
 - Keyword lists: `FAST_KEYWORDS`, `STANDARD_KEYWORDS`, `FRONTIER_KEYWORDS` in `router.py`.
-- Sensitivity: `MIN_CONFIDENCE` in the hook. Raise it for fewer notes.
-- Frequency: `SUGGEST_EVERY` in the hook.
+- Sensitivity: thresholds and weights in `config/decisions.json`. Learned weights in `~/.ai-rules/data/weights.json` override them.
+- Frequency: `SUGGEST_EVERY` and `EARLY_PROMPTS` in the hook.
 - Budgets per tier: `config/harness-budgets.json`.
-- Per-project overrides: `.fieldbook/harness.json` with `tier`, `exclude`, and `pin`.
+- Per-project overrides: `.harness/config.json` with `tier`, `exclude`, and `pin`.
 
 After editing, run `./install.sh` so the copies in `~/.claude`, `~/.ai-rules`, and the other tools update. New Claude Code sessions pick up hook changes.
 
@@ -49,10 +49,10 @@ Feed the hook a prompt by hand:
 echo '{"prompt":"format this json list and sort the keys then validate it","cwd":"'"$PWD"'","session_id":"manual"}' | python3 ~/.claude/hooks/prompt-route.py
 ```
 
-With no transcript there is no model, so only the context paragraph can appear.
+With no transcript there is no model, so only the task note can appear.
 
 ## Troubleshooting
 
 - No notes ever appear: check `~/.claude/settings.json` has a `UserPromptSubmit` entry for `prompt-route.py`, that `~/.ai-rules/router.off` does not exist, and read `~/.ai-rules/logs/routing.jsonl` to see what the hook decided.
 - Notes seem wrong: the heuristic is keyword based. Raise `MIN_CONFIDENCE` or ignore the note.
-- Too many context paragraphs: the selection changes with the prompt. Pin or exclude items in `.fieldbook/harness.json`.
+- Notes you never use: `harness learn` lowers their probability from outcomes. `harness eval` shows the hit rate per question.

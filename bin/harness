@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""harness - the ai-dotfiles project engine.
+
+Projects are set up and kept current automatically (session start, each prompt,
+cd, git checkout and merge). These commands are for looking and for overrides.
+
+    harness status [DIR]            what the engine sees and has done here
+    harness doctor [DIR]            token load against the caps, install drift (exit 1 on a failure)
+    harness init [DIR]              set a project up now, skipping the is-it-a-project check
+    harness remove [DIR]            delete what the engine wrote here and opt the project out
+    harness plan --task TEXT [DIR]  which rules, skills, agents and memory fit a task
+    harness eval                    decision engine report from logged outcomes
+    harness learn                   label outcomes, recalibrate, refit weights
+    harness auto --trigger T [--cwd DIR]   what the triggers run; prints nothing
+
+Switch the engine off with: touch ~/.ai-rules/harness.off
+Keep it out of one project with a .harness-skip file, or a line in ~/.ai-rules/harness-exclude.
+"""
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from engine import SHARED, decide, doctor, generate, outcomes, project  # noqa: E402
+
+
+def _dir(args):
+    rest = [a for a in args if not a.startswith("-")]
+    return os.path.abspath(rest[0] if rest else ".")
+
+
+def _opt(args, name, default=None):
+    return args[args.index(name) + 1] if name in args and args.index(name) + 1 < len(args) else default
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        print(__doc__.strip())
+        return 0
+    cmd, args = argv[0], argv[1:]
+
+    if cmd == "auto":
+        generate.auto(_opt(args, "--cwd", os.getcwd()), _opt(args, "--trigger", "manual"))
+        return 0
+
+    if cmd == "status":
+        root, why = project.locate(_dir(args))
+        if root is None:
+            print("no project here: %s" % why)
+            return 0
+        state = generate._load(generate._state_path(root), {})
+        excluded = project.is_excluded(root, project.load_excludes(SHARED / "harness-exclude"))
+        print("project   %s (%s)" % (root, why))
+        print("excluded  %s" % ("yes" if excluded else "no"))
+        print("state     %s" % ("set up" if state.get("setup") and not state.get("removed") else
+                                "block removed by hand; engine stays out" if state.get("removed") else
+                                "declined for now" if state.get("declined") else "not set up yet"))
+        print("stack     %s" % (", ".join(project.detect_tags(root)) or "none detected"))
+        for k, v in project.detect_commands(root).items():
+            print("command   %s: %s" % (k, v))
+        print("memory    %s" % ("fieldbook" if (root / ".fieldbook" / "bank").is_dir() else ".harness/decisions.md" if (root / ".harness").is_dir() else "none"))
+        return 0
+
+    if cmd == "doctor":
+        lines, failed = doctor.run(_dir(args))
+        print("\n".join(lines))
+        return 1 if failed else 0
+
+    if cmd in ("init", "remove"):
+        root, why = project.locate(_dir(args))
+        if root is None:
+            print("no project here: %s" % why)
+            return 3
+        if cmd == "remove":
+            print("removed: %s" % (", ".join(generate.remove(root)) or "nothing"))
+            return 0
+        try:
+            os.remove(root / ".harness-skip")
+        except OSError:
+            pass
+        r = generate.setup(root, "manual", force=True)
+        print("%s: %s" % (r["action"], root))
+        for note in r["notes"]:
+            print("  " + note)
+        return 0
+
+    if cmd == "plan":
+        task = _opt(args, "--task")
+        if not task:
+            print("usage: harness plan --task TEXT [DIR]")
+            return 3
+        rest = [a for i, a in enumerate(args) if not a.startswith("-") and (i == 0 or args[i - 1] != "--task")]
+        cm = Path(__file__).resolve().parent / "context-manager.py"
+        return subprocess.call([sys.executable, str(cm), "plan", "--task", task, "--project", rest[0] if rest else "."])
+
+    if cmd == "learn":
+        print("labelled %d new outcomes" % outcomes.label())
+        for line in decide.learn() or ["nothing to change yet"]:
+            print(line)
+        return 0
+
+    if cmd == "eval":
+        print(json.dumps(decide.evaluate(), indent=2))
+        return 0
+
+    print(__doc__.strip())
+    return 3
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

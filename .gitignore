@@ -1,2 +1,4 @@
 .DS_Store
 CODEXPROMPT.md
+__pycache__/
+*.pyc

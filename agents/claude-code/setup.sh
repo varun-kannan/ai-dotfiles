@@ -8,6 +8,7 @@ mkdir -p "$HOME/.claude/hooks"
 install -m 0755 "$AGENT_DIR/hooks/pre-write-guard.sh"  "$HOME/.claude/hooks/pre-write-guard.sh"
 install -m 0755 "$AGENT_DIR/hooks/post-write-audit.sh" "$HOME/.claude/hooks/post-write-audit.sh"
 install -m 0755 "$AGENT_DIR/hooks/prompt-route.py"     "$HOME/.claude/hooks/prompt-route.py"
+install -m 0755 "$AGENT_DIR/hooks/session-start.py"   "$HOME/.claude/hooks/session-start.py"
 
 # Subagents (agents/definitions) and slash commands (commands/) are copied, not
 # linked, so a re-run replaces them. A same-named file you wrote yourself is overwritten.
@@ -43,6 +44,7 @@ for event, matcher, script, timeout in [
     ("PreToolUse",  "Write|Edit|NotebookEdit", "pre-write-guard.sh",  15),
     ("PostToolUse", "Write|Edit",              "post-write-audit.sh", 20),
     ("UserPromptSubmit", None,                 "prompt-route.py",     10),  # no matcher support
+    ("SessionStart", None,                     "session-start.py",    30),
 ]:
     cmd = os.path.join(dest, "hooks", script)
     groups = hooks.setdefault(event, [])
@@ -57,4 +59,4 @@ with open(path, "w") as fh:
     json.dump(cfg, fh, indent=2)
     fh.write("\n")
 PY
-echo "  ok    hooks (write guard, write audit, prompt-route), settings.json"
+echo "  ok    hooks (write guard, write audit, prompt-route, session-start), settings.json"

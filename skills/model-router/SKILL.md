@@ -31,10 +31,10 @@ python3 ~/.ai-rules/skills/model-router/router.py suggest "format this json" cla
 `install.sh` registers `prompt-route.py` as a `UserPromptSubmit` hook. On each prompt it:
 
 - reads the current model from the last assistant message in the session transcript (the hook input has no model field),
-- scores the prompt and prints a `[model-router]` note to the user only, so it costs no tokens, when the model looks much too big or too small,
-- adds a few lines naming the domain rules, skills, and project memory the context loader picked, when the session is in a recognized project.
+- scores the prompt and, when the decision engine judges it worth saying, prints a `[model-router]` note to the user only, so it costs no tokens,
+- names rules, skills or project memory this prompt adds, when the decision engine judges the note useful and the items were not named earlier in the session.
 
-It stays quiet when the gap between tiers is small, for prompts under 20 characters, for slash commands, for the first prompt of a session (no model known yet), and it repeats a suggestion at most once per 5 prompts. It never suggests a cheaper model for prompts over 1,500 characters.
+It stays quiet for prompts under 20 characters and slash commands, repeats a suggestion at most once per 5 prompts, and rarely suggests a cheaper model late in a session or for a long prompt, because switching then costs the prompt cache.
 
 Turn it off with `touch ~/.ai-rules/router.off`, or `AI_ROUTER_OFF=1` in the environment. Each decision is logged to `~/.ai-rules/logs/routing.jsonl` (no prompt text).
 

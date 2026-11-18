@@ -1,5 +1,5 @@
 {
-  "_note": "Token budgets for harness context per model tier. Estimates use chars/4. Read by bin/context-manager.py.",
+  "_note": "Token budgets. tiers: what bin/context-manager.py may select per model tier. session: caps on what loads at every session start, checked by harness doctor. project_block: cap on the generated AGENTS.md block. Estimates use chars/4.",
   "tiers": {
     "fast": {
       "model": "claude-haiku-5-5",
@@ -25,5 +25,11 @@
       "memory": 3000,
       "total": 10000
     }
-  }
+  },
+  "session": {
+    "global_rules": 1800,
+    "project_files": 1500,
+    "descriptions": 2000
+  },
+  "project_block": 600
 }

@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Keeps the project harness current after a clone, checkout or merge.
+# Runs in the background and never blocks or fails the git command.
+H="${AI_RULES_HOME:-$HOME/.ai-rules}/bin/harness"
+if [ -x "$H" ]; then
+  ( env -u GIT_DIR -u GIT_INDEX_FILE -u GIT_WORK_TREE "$H" auto --trigger git --cwd "$PWD" >/dev/null 2>&1 & )
+fi
+exit 0

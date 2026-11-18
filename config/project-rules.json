@@ -1,0 +1,63 @@
+{
+  "_note": "Short do and don't lines compiled into each project's generated AGENTS.md block. universal always applies; a tag's lines apply when engine/project.py detects that tag. Keep each line under 140 characters: the whole block is capped (project_block in harness-budgets.json) and tag lines are dropped from the end when it is over.",
+  "universal": {
+    "do": [
+      "Run the test command above before saying a change works, and report its real output.",
+      "Reproduce a bug with a failing test before fixing it.",
+      "Confirm a package exists in its registry before importing it.",
+      "Keep each change limited to what the task asked for."
+    ],
+    "dont": [
+      "Don't build SQL, shell commands or HTML by joining strings with input.",
+      "Don't put keys, tokens or passwords in source, tests or logs.",
+      "Don't add AI attribution to commits or pull requests.",
+      "Don't refactor or reformat code the task did not touch."
+    ]
+  },
+  "tags": {
+    "nodejs": {
+      "do": ["Await every promise and give every outbound call a timeout.", "Install from the lockfile and keep it committed."],
+      "dont": ["Don't pass input to child_process.exec; use execFile or spawn with an argument array."]
+    },
+    "typescript": {
+      "do": ["Type external input as unknown and narrow it at the boundary."],
+      "dont": ["Don't use any or a non-null assertion to silence the compiler."]
+    },
+    "react": {
+      "do": ["Derive values during render; keep effects for syncing with things outside React."],
+      "dont": ["Don't use an array index as the key of a list that reorders or filters."]
+    },
+    "python": {
+      "do": ["Use the project's environment tool and annotate public function signatures."],
+      "dont": ["Don't use a bare except, a mutable default argument, or shell=True."]
+    },
+    "rust": {
+      "do": ["Return Result and propagate with ?; run cargo clippy before finishing."],
+      "dont": ["Don't unwrap or expect on input from outside the program."]
+    },
+    "java": {
+      "do": ["Use try-with-resources and preserve the cause when wrapping an exception."],
+      "dont": ["Don't return null for a collection or catch Exception broadly."]
+    },
+    "kotlin": {
+      "do": ["Run blocking I/O on Dispatchers.IO inside a scope the caller owns."],
+      "dont": ["Don't swallow CancellationException or use !! without a stated reason."]
+    },
+    "go": {
+      "do": ["Wrap errors with %w and check them with errors.Is."],
+      "dont": ["Don't ignore a returned error."]
+    },
+    "docker": {
+      "do": ["Pin base image versions and run as a non-root user."],
+      "dont": ["Don't put secrets in ENV, ARG or copied files."]
+    },
+    "database": {
+      "do": ["Parameterize every query and review the lock each migration statement takes."],
+      "dont": ["Don't deploy code that needs a column before its migration has run."]
+    },
+    "ci": {
+      "do": ["Give workflows the minimum permissions and install from the lockfile."],
+      "dont": ["Don't hide a failing step with continue-on-error."]
+    }
+  }
+}
