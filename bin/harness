@@ -1,38 +1,141 @@
 #!/usr/bin/env python3
 """harness - the ai-dotfiles project engine.
 
-Projects are set up and kept current automatically (session start, each prompt,
-cd, git checkout and merge). These commands are for looking and for overrides.
+Projects are set up and kept current automatically: at Claude Code session start,
+on each prompt, on cd in zsh, and after git clone, checkout and merge. These
+commands are for looking and for overrides.
 
     harness status [DIR]            what the engine sees and has done here
-    harness doctor [DIR]            token load against the caps, install drift (exit 1 on a failure)
-    harness init [DIR]              set a project up now, skipping the is-it-a-project check
-    harness remove [DIR]            delete what the engine wrote here and opt the project out
+    harness doctor [DIR]            session-start token load against the caps, install health (exit 1 on a failure)
+    harness trust [DIR]             this repo is yours: the engine may write AGENTS.md and CLAUDE.md and run fieldbook
+    harness untrust [DIR]           back to local mode: nothing git tracks is touched
+    harness init [DIR]              set a project up now, even if the engine declined or you removed the block
+    harness remove [DIR]            delete what the engine wrote here and keep it out (.harness-skip)
     harness plan --task TEXT [DIR]  which rules, skills, agents and memory fit a task
-    harness eval                    decision engine report from logged outcomes
-    harness learn                   label outcomes, recalibrate, refit weights
-    harness auto --trigger T [--cwd DIR]   what the triggers run; prints nothing
+    harness eval                    decision engine report from labelled outcomes
+    harness learn                   label outcomes, refit weights, rebuild calibration
+    harness auto [--trigger T] [--cwd DIR] what the triggers run (T: session, prompt, cd, git or manual, the default); prints nothing
+
+A git repo is set up in local mode unless you trust it. Nothing inside a repo can
+prove whose it is, so the engine does not guess. A folder the engine set up before
+it had git is trusted on its own. Trusted folders are listed in ~/.ai-rules/trusted.
 
 Switch the engine off with: touch ~/.ai-rules/harness.off
 Keep it out of one project with a .harness-skip file, or a line in ~/.ai-rules/harness-exclude.
+init and trust respect both: they set nothing up while the engine is off or the project is listed.
+
+Exit: 0 done; 1 a check or a write failed, or init could not set the project up and says why
+(skipped, busy); 3 usage error,
+no project here, or init refused (engine off, project excluded). status exits 0 when there is
+no project; trust and untrust exit 0 when they record the change but may not set the project up
+now, and say why.
 """
-import json
 import os
-import subprocess
 import sys
+
+# Run isolated (python3 -I): no PYTHONPATH, no user site, and not the current folder on the
+# module path, which may be a repository with a file named like a standard module. A start
+# without -I (from a #! line or a hook command) restarts once with it.
+if not sys.flags.isolated and __name__ == "__main__":
+    os.execv(sys.executable, [sys.executable, "-I", os.path.abspath(__file__)] + sys.argv[1:])
+import json
+import subprocess
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from engine import SHARED, decide, doctor, generate, outcomes, project  # noqa: E402
+import engine  # noqa: E402
+from engine import decide, doctor, generate, outcomes, project, safefs  # noqa: E402
 
 
-def _dir(args):
-    rest = [a for a in args if not a.startswith("-")]
-    return os.path.abspath(rest[0] if rest else ".")
+OPTIONS = {"plan": ("--task",), "auto": ("--trigger", "--cwd")}
+FAILED_ACTIONS = ("unsafe", "damaged", "skipped", "busy", "error")
 
 
-def _opt(args, name, default=None):
-    return args[args.index(name) + 1] if name in args and args.index(name) + 1 < len(args) else default
+class Usage(Exception):
+    pass
+
+
+def parse(cmd, args):
+    """(positional arguments, {option: value}). Anything a command does not take is a usage error."""
+    allowed = OPTIONS.get(cmd, ())
+    positional, options, i = [], {}, 0
+    while i < len(args):
+        a = args[i]
+        if a == "--":
+            positional += args[i + 1:]
+            break
+        if a.split("=", 1)[0] in allowed and "=" in a:
+            options[a.split("=", 1)[0]] = a.split("=", 1)[1]
+            i += 1
+            continue
+        if a in allowed:
+            if i + 1 >= len(args):
+                raise Usage("%s needs a value" % a)
+            options[a] = args[i + 1]
+            i += 2
+        elif a.startswith("-"):
+            raise Usage("unknown option for %s: %s" % (cmd, a))
+        else:
+            positional.append(a)
+            i += 1
+    limit = 0 if cmd in ("eval", "learn", "auto") else 1
+    if len(positional) > limit:
+        raise Usage("too many arguments for %s" % cmd)
+    return positional, options
+
+
+def _folder(positional):
+    target = os.path.abspath(positional[0] if positional else ".")
+    if not os.path.isdir(target):
+        raise Usage("not a folder: %s" % target)
+    return target
+
+
+def status(root, why):
+    state = generate._load(generate._state_path(root), {})
+    excluded = project.is_excluded(root, project.load_excludes(engine.SHARED / "harness-exclude"))
+    repo = project.enclosing_repo(root)
+    trusted = generate.is_trusted(root)
+    print("project   %s (%s)" % (root, why))
+    print("excluded  %s" % ("yes" if excluded else "no"))
+    print("mode      %s" % ("full (no git yet)" if repo is None else
+                            "full (trusted)" if trusted else
+                            "local: nothing git tracks is touched. Run `harness trust` if this repo is yours"))
+    print("state     %s" % ("you removed the block; the engine stays out until `harness init`" if state.get("removed") else
+                            "skipped: %s" % (state.get("blocked_why") or state["blocked"]) if state.get("blocked") else
+                            "set up" if state.get("setup") else
+                            "undecided; asked again later" if state.get("abstained") else
+                            "not treated as a project yet" if state.get("declined") else "not set up yet"))
+    print("stack     %s" % (", ".join(project.detect_tags(root)) or "none detected"))
+    for k, v in project.detect_commands(root).items():
+        print("command   %s: %s" % (k, v))
+    memory = ("fieldbook" if generate._has_fieldbook(root) else
+              ".harness/decisions.md" if safefs.exists(root, root / ".harness" / "decisions.md") else "none yet")
+    print("memory    %s" % memory)
+    if engine.harness_off():
+        print("engine    switched off (~/.ai-rules/harness.off or AI_HARNESS_OFF=1)")
+
+
+def _report(r, root):
+    print("%s: %s%s" % (r["action"], root, " (%s mode)" % r["mode"] if r.get("mode") else ""))
+    for note in r["notes"]:
+        print("  " + note)
+    return 1 if r["action"] in FAILED_ACTIONS else 0
+
+
+def _blocked(root, init=False):
+    """Why the engine may not set this project up on request, or None.
+
+    init is the one command that undoes a .harness-skip file, so only an exclude line stops
+    it. trust and untrust respect both.
+    """
+    if engine.harness_off():
+        return "the engine is switched off (~/.ai-rules/harness.off or AI_HARNESS_OFF=1)"
+    if project.is_excluded(root, project.load_excludes(engine.SHARED / "harness-exclude"), skip_file=False):
+        return "%s is listed in ~/.ai-rules/harness-exclude; remove that line first" % root
+    if not init and generate.skip_file_holds(root):
+        return "%s has a .harness-skip file; run `harness init` to let the engine back in" % root
+    return None
 
 
 def main(argv):
@@ -40,73 +143,89 @@ def main(argv):
         print(__doc__.strip())
         return 0
     cmd, args = argv[0], argv[1:]
+    if cmd not in ("status", "doctor", "trust", "untrust", "init", "remove", "plan", "eval", "learn", "auto"):
+        print("harness: unknown command %r; `harness help` lists them" % cmd, file=sys.stderr)
+        return 3
+    try:
+        positional, options = parse(cmd, args)
 
-    if cmd == "auto":
-        generate.auto(_opt(args, "--cwd", os.getcwd()), _opt(args, "--trigger", "manual"))
-        return 0
-
-    if cmd == "status":
-        root, why = project.locate(_dir(args))
-        if root is None:
-            print("no project here: %s" % why)
+        if cmd == "auto":
+            trigger = options.get("--trigger", "manual")
+            if trigger not in ("session", "prompt", "cd", "git", "manual"):
+                print("harness: --trigger is one of session, prompt, cd, git, manual", file=sys.stderr)
+                return 3
+            cwd = os.path.abspath(options.get("--cwd", os.getcwd()))
+            os.chdir("/")        # never work from inside a folder that may be hostile
+            generate.auto(cwd, trigger)
             return 0
-        state = generate._load(generate._state_path(root), {})
-        excluded = project.is_excluded(root, project.load_excludes(SHARED / "harness-exclude"))
-        print("project   %s (%s)" % (root, why))
-        print("excluded  %s" % ("yes" if excluded else "no"))
-        print("state     %s" % ("set up" if state.get("setup") and not state.get("removed") else
-                                "block removed by hand; engine stays out" if state.get("removed") else
-                                "declined for now" if state.get("declined") else "not set up yet"))
-        print("stack     %s" % (", ".join(project.detect_tags(root)) or "none detected"))
-        for k, v in project.detect_commands(root).items():
-            print("command   %s: %s" % (k, v))
-        print("memory    %s" % ("fieldbook" if (root / ".fieldbook" / "bank").is_dir() else ".harness/decisions.md" if (root / ".harness").is_dir() else "none"))
-        return 0
+
+        if cmd == "learn":
+            print("labelled %d new outcomes" % outcomes.label())
+            for line in decide.learn() or ["nothing to change yet"]:
+                print(line)
+            return 0
+
+        if cmd == "eval":
+            print(json.dumps(decide.evaluate(), indent=2))
+            return 0
+
+        target = _folder(positional)
+        os.chdir("/")
+    except Usage as exc:
+        print("harness: %s" % exc, file=sys.stderr)
+        return 3
 
     if cmd == "doctor":
-        lines, failed = doctor.run(_dir(args))
+        lines, failed = doctor.run(target)
         print("\n".join(lines))
         return 1 if failed else 0
 
-    if cmd in ("init", "remove"):
-        root, why = project.locate(_dir(args))
-        if root is None:
-            print("no project here: %s" % why)
-            return 3
-        if cmd == "remove":
-            print("removed: %s" % (", ".join(generate.remove(root)) or "nothing"))
-            return 0
-        try:
-            os.remove(root / ".harness-skip")
-        except OSError:
-            pass
-        r = generate.setup(root, "manual", force=True)
-        print("%s: %s" % (r["action"], root))
-        for note in r["notes"]:
-            print("  " + note)
-        return 0
+    root, why = project.locate(target)
 
     if cmd == "plan":
-        task = _opt(args, "--task")
-        if not task:
-            print("usage: harness plan --task TEXT [DIR]")
+        if not options.get("--task", "").strip():
+            print("usage: harness plan --task TEXT [DIR]", file=sys.stderr)
             return 3
-        rest = [a for i, a in enumerate(args) if not a.startswith("-") and (i == 0 or args[i - 1] != "--task")]
         cm = Path(__file__).resolve().parent / "context-manager.py"
-        return subprocess.call([sys.executable, str(cm), "plan", "--task", task, "--project", rest[0] if rest else "."])
+        return subprocess.call([sys.executable, str(cm), "plan", "--task=" + options["--task"],
+                                "--project=" + str(root or target)], cwd="/")
 
-    if cmd == "learn":
-        print("labelled %d new outcomes" % outcomes.label())
-        for line in decide.learn() or ["nothing to change yet"]:
-            print(line)
+    if root is None:
+        if cmd == "status":
+            print("no project here: %s" % why)
+            return 0
+        print("no project here: %s" % why, file=sys.stderr)
+        return 3
+    if cmd == "status":
+        status(root, why)
         return 0
+    if cmd == "remove":
+        done = generate.remove(root)
+        print("\n".join(("done     " if " written" in x else "removed  ") + x if not x.startswith("FAILED") else x
+                        for x in done) or "nothing to remove")
+        return 1 if any(x.startswith("FAILED") for x in done) else 0
+    if cmd in ("trust", "untrust"):
+        repo = project.enclosing_repo(root)
+        if repo is None:
+            print("%s is not in a git repository, so there is nothing to trust: a folder without git is always in full mode" % root)
+            return 0
+        changed = generate.trust(repo) if cmd == "trust" else generate.untrust(repo)
+        word = "trusted" if cmd == "trust" else "not trusted"
+        print(("%s: %s" % ("trusted" if cmd == "trust" else "no longer trusted", repo)) if changed else "already %s: %s" % (word, repo))
+        if _blocked(root):
+            print("  not set up now: %s" % _blocked(root))
+            return 0
+        return _report(generate.setup(root, "manual"), root)
 
-    if cmd == "eval":
-        print(json.dumps(decide.evaluate(), indent=2))
-        return 0
-
-    print(__doc__.strip())
-    return 3
+    # init
+    why_not = _blocked(root, init=True)
+    if why_not:
+        print("harness: %s" % why_not, file=sys.stderr)
+        return 3
+    note = generate.lift_skip(root)
+    if note:
+        print("note: %s" % note)
+    return _report(generate.setup(root, "manual", force=True), root)
 
 
 if __name__ == "__main__":

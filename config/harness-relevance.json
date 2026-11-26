@@ -1,5 +1,5 @@
 {
-  "_note": "Weights for bin/context-manager.py. A candidate scores weight x tag hits from the task and project, plus priority. Lower-scored items are dropped first when a tier budget is exceeded. memory maps to a fieldbook bank (.fieldbook/bank/); 00-overview.md is excluded because the project AGENTS.md already imports it.",
+  "_note": "Weights for bin/context-manager.py. A candidate scores weight x min(1, 0.5 + 0.25 x tag hits), plus its priority bonus; tags and task words are stemmed. Items with always: true are kept in plan() regardless of budget and never named by task_matches(). memory maps to a fieldbook bank (.fieldbook/bank/); 00-overview.md is excluded because the project AGENTS.md already imports it.",
   "priority_bonus": {
     "high": 0.3,
     "medium": 0.15,
@@ -287,7 +287,6 @@
         "database",
         "sql",
         "migration",
-        "index",
         "query",
         "schema"
       ],
@@ -378,7 +377,6 @@
       "tags": [
         "dependency",
         "install",
-        "build",
         "version",
         "stack",
         "upgrade"
@@ -398,7 +396,6 @@
     "04-decisions.md": {
       "tags": [
         "decision",
-        "why",
         "adr",
         "choose",
         "design",

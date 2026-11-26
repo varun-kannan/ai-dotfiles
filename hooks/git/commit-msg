@@ -1,4 +1,13 @@
-#!/usr/bin/env bash
+#!/bin/bash
+# ai-dotfiles-hook: a hook that was here before is kept as <name>.local and runs first;
+# if it fails, so does this one.
+# Only absolute PATH entries: an empty or relative one could pick up a program from the repo.
+_p=""; _ifs="$IFS"; IFS=:
+for _d in $PATH; do case "$_d" in /*) _p="${_p:+$_p:}$_d" ;; esac; done
+IFS="$_ifs"; PATH="${_p:-/usr/bin:/bin}"; export PATH
+# A hook of yours kept as commit-msg.local is for commits; git never runs it for git am, so
+# neither does this when applypatch-msg calls it.
+if [ -x "$0.local" ] && [ "${AI_HYGIENE_AM:-0}" != "1" ]; then "$0.local" "$@" || exit $?; fi
 # strip-ai-attribution - git commit-msg hook
 #
 # Removes AI tooling attribution from commit messages at the git layer.
@@ -17,16 +26,31 @@ MSG_FILE="$1"
 TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT
 
-# Strip attribution lines. Extended regex, case-insensitive where it helps.
-grep -v -E \
-  -e '^[[:space:]]*Co-[Aa]uthored-[Bb]y:[[:space:]]*(Claude|Anthropic|Copilot|Cursor|Codex|Gemini|Windsurf)' \
-  -e '^[[:space:]]*Co-[Aa]uthored-[Bb]y:.*(noreply@anthropic\.com|copilot@github\.com|noreply@openai\.com)' \
+# Strip attribution lines: a trailer that names an AI tool or carries a tool's own address,
+# a session link, or a "generated with" line. Any letter case; -a so a stray byte in the
+# message cannot make grep treat it as binary. A person who happens to be called Claude, or
+# a sentence that mentions a tool, is left alone: a trailer is removed when it carries a
+# tool's own address, or names a tool and gives no address at all; a "created with" line
+# must end at the tool's name.
+TOOLS='(Claude( ([0-9.]+ )?(Code|Opus|Sonnet|Haiku|Fable)[^<]*)?|Anthropic|GitHub Copilot|Copilot|Cursor( Agent)?|Codex|ChatGPT|Gemini|Windsurf|Devin AI|aider( \([^<]*\))?)'
+# Names nobody is called: removed whatever address follows. A bare "Claude" or "Devin" with
+# an address that is not a tool's own is taken to be a person.
+SURE_TOOLS='(Claude ([0-9.]+ )?(Code|Opus|Sonnet|Haiku|Fable)[^<]*|Anthropic|GitHub Copilot|Copilot|Cursor Agent|Codex|ChatGPT|Windsurf|Devin AI|aider( \([^<]*\))?)'
+# In a sentence ("Assisted by ...") only names that are not also common first names.
+LINE_TOOLS='(Claude Code|Anthropic|GitHub Copilot|Copilot|Cursor|Codex|ChatGPT|Gemini|Windsurf|aider)'
+BOTS='(noreply@anthropic\.com|copilot@github\.com|[^<>]*copilot[^<>]*@users\.noreply\.github\.com|noreply@openai\.com|[^<>]*devin-ai-integration[^<>]*|[^<>]*chatgpt-codex-connector[^<>]*|[^<>]*claude\[bot\][^<>]*|gemini@google\.com|[^<>]*google-labs-jules[^<>]*|[^<>]*jules\[bot\][^<>]*|noreply@aider\.chat|cursoragent@cursor\.com)'
+TRAILERS='(Co-authored-by|Co-developed-by|Signed-off-by|Assisted-by|Generated-by|Reviewed-by)'
+# Up to a few symbol bytes (an emoji) may come before a "Generated with" line.
+MARK='[^[:alnum:][:space:]]{0,12}'
+grep -a -v -i -E \
+  -e "^[[:space:]]*(Co-authored-by|Co-developed-by|Signed-off-by|Assisted-by|Generated-by):[[:space:]]*${TOOLS}[[:space:]]*\$" \
+  -e "^[[:space:]]*(Co-authored-by|Co-developed-by|Signed-off-by|Assisted-by|Generated-by):[[:space:]]*${SURE_TOOLS}[[:space:]]*<[^<>]*>[[:space:]]*\$" \
+  -e "^[[:space:]]*${TRAILERS}:.*<${BOTS}>" \
   -e '^[[:space:]]*Claude-Session:[[:space:]]*https?://' \
-  -e '^[[:space:]]*.?[[:space:]]*Generated with \[?(Claude|Cursor|Copilot|Codex)' \
-  -e '^[[:space:]]*(Generated|Created|Authored|Assisted) (with|by)[[:space:]]+(Claude|Anthropic|ChatGPT|Copilot|Cursor|Gemini|Codex)' \
+  -e "^[[:space:]]*${MARK}[[:space:]]*Generated with \\[(Claude|Cursor|Copilot|Codex)" \
+  -e "^[[:space:]]*${MARK}[[:space:]]*(Generated|Created|Authored|Assisted) (with|by)[[:space:]]+${LINE_TOOLS}[[:space:]]*[.!]?[[:space:]]*\$" \
   -e '^[[:space:]]*https?://claude\.ai/code/session_' \
-  -e '^[[:space:]]*🤖' \
-  "$MSG_FILE" > "$TMP" || true
+  < <(tr -d '\000' < "$MSG_FILE") > "$TMP" || true       # git refuses a NUL in a message anyway
 
 # Collapse trailing blank lines left behind by the removals.
 awk 'BEGIN{n=0} {lines[NR]=$0} END{

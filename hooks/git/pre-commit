@@ -1,11 +1,20 @@
-#!/usr/bin/env bash
+#!/bin/bash
+# ai-dotfiles-hook: a hook that was here before is kept as <name>.local and runs first;
+# if it fails, so does this one.
+# Only absolute PATH entries: an empty or relative one could pick up a program from the repo.
+_p=""; _ifs="$IFS"; IFS=:
+for _d in $PATH; do case "$_d" in /*) _p="${_p:+$_p:}$_d" ;; esac; done
+IFS="$_ifs"; PATH="${_p:-/usr/bin:/bin}"; export PATH
+# A hook of yours kept as pre-commit.local is for commits: git never runs it for git am, so
+# neither does this when pre-applypatch calls it.
+if [ -x "$0.local" ] && [ "${AI_HYGIENE_AM:-0}" != "1" ]; then "$0.local" "$@" || exit $?; fi
 # pre-commit - universal output-hygiene gate.
 #
 # This is the only layer that catches every AI tool. Claude Code, Codex, Cursor,
 # Copilot, a paste out of a chat window, or a human typing: all of it reaches git
 # eventually, and all of it passes through here.
 #
-# Blocks the commit on hard hygiene violations in staged files, and reports
+# Blocks the commit on hard hygiene violations in the staged content, and reports
 # imports that no manifest declares.
 #
 # Bypass:  AI_HYGIENE_SKIP=1 git commit ...   or   git commit --no-verify
@@ -17,18 +26,213 @@ HYGIENE="$ROOT/bin/content-hygiene"
 CHECKDEPS="$ROOT/bin/check-deps"
 
 [ "${AI_HYGIENE_SKIP:-0}" = "1" ] && exit 0
-[ -x "$HYGIENE" ] || exit 0
+if [ ! -x "$HYGIENE" ]; then
+  # Not installed, or the install is broken. Strict mode blocks; otherwise the commit goes on.
+  if [ "${AI_HYGIENE_STRICT:-0}" = "1" ]; then
+    echo "pre-commit: $HYGIENE is missing or not executable, and AI_HYGIENE_STRICT=1: commit blocked" >&2
+    exit 1
+  fi
+  echo "pre-commit: $HYGIENE is missing or not executable; hygiene check skipped" >&2
+  exit 0
+fi
 
-# Added, copied, modified or renamed files only. NUL-delimited for odd names.
+# A merge, cherry-pick, revert or rebase commits other people's content along with yours, and
+# this gate is for what is being written now, so those commits are not scanned.
+# git am also works in rebase-apply/, but runs pre-applypatch, which calls this with
+# AI_HYGIENE_AM=1: a patch being applied is new content and is scanned.
+gitdir="$(git rev-parse --git-dir 2>/dev/null)" || exit 0
+# During an interactive rebase a commit can be brand new (made at an "edit" stop): there only
+# the files whose content is in neither HEAD nor the commit being replayed are scanned. That
+# covers `git commit` and `git commit --amend` at the stop. Changes staged and left for
+# `git rebase --continue` to commit are not scanned: git's sequencer commits them without hooks.
+rebase_known=""
+for marker in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply; do
+  if [ "$marker" = rebase-apply ] && [ "${AI_HYGIENE_AM:-0}" = "1" ] && [ -e "$gitdir/rebase-apply/applying" ]; then
+    continue
+  fi
+  if [ "$marker" = rebase-merge ] && [ -d "$gitdir/rebase-merge" ]; then
+    rebase_known=1
+    continue
+  fi
+  [ -e "$gitdir/$marker" ] && exit 0
+done
+
+# Added, copied and modified files, and renamed ones whose content changed. A file that was
+# only moved is not judged again. NUL-delimited for odd names: with -z a rename or copy is
+# "status NUL old NUL new NUL", anything else "status NUL path NUL".
 staged=()
-while IFS= read -r -d '' f; do
-  [ -f "$f" ] && staged+=("$f")
-done < <(git diff --cached --name-only --diff-filter=ACMR -z)
+moved=()
+while IFS= read -r -d '' st; do
+  case "$st" in
+    R*|C*)
+      IFS= read -r -d '' _old || break
+      IFS= read -r -d '' f || break
+      # A pure move keeps its earlier verdict, unless the new path is judged differently (a
+      # .png becoming .py, notes becoming requirements.txt or a CI workflow). Pure moves are
+      # collected and judged in one scanner call below, so a large folder move stays quick.
+      if [ "$st" = "R100" ]; then
+        moved+=("$_old" "$f")
+      else
+        staged+=("$f")
+      fi ;;
+    *)
+      IFS= read -r -d '' f || break
+      staged+=("$f") ;;
+  esac
+done < <(git diff --cached --name-status -M --diff-filter=ACMRT -z)
+
+if [ ${#moved[@]} -gt 0 ]; then
+  while IFS= read -r -d '' f; do
+    staged+=("$f")
+  done < <(printf '%s\0' "${moved[@]}" | "$HYGIENE" --classify-moves 2>/dev/null)
+fi
 
 [ ${#staged[@]} -eq 0 ] && exit 0
 
-report="$("$HYGIENE" --quiet "${staged[@]}" 2>/dev/null)"
-status=$?
+# Scan what is being committed, not what is on disk: each staged blob is copied byte for byte
+# into a temporary folder and scanned there. Nothing is converted on the way (no
+# working-tree-encoding, no filters), so the bytes scanned are the bytes committed.
+# Symlinks and submodules are not files to scan.
+# When the scan cannot even start, say so; strict mode blocks.
+scan_failed() {
+  if [ "${AI_HYGIENE_STRICT:-0}" = "1" ]; then
+    echo "pre-commit: $1, and AI_HYGIENE_STRICT=1: commit blocked" >&2
+    exit 1
+  fi
+  echo "pre-commit: $1; hygiene check skipped" >&2
+  exit 0
+}
+command -v python3 >/dev/null 2>&1 || scan_failed "python3 was not found"
+tmp="$(mktemp -d 2>/dev/null)" || scan_failed "no temporary folder could be made"
+trap 'rm -rf "$tmp"' EXIT
+scan=()
+if ! printf '%s\0' "${staged[@]}" | REBASE_KNOWN="$rebase_known" GITDIR="$gitdir" python3 -I -c '
+import os, subprocess, sys
+dest = sys.argv[1]
+names = [n for n in sys.stdin.buffer.read().split(b"\0") if n]
+# Names are taken literally: a file called ":(literal" or ":(icase)x" is a file, not a pathspec.
+# The whole index is listed once and the staged names picked out here, so the command line
+# does not grow with the commit (and no name is read as a pathspec).
+run = subprocess.run(["git", "ls-files", "-s", "-z"], capture_output=True)
+if run.returncode != 0:
+    sys.exit(3)
+wanted_names = set(names)
+# Content already in HEAD or in the commit a rebase is replaying is not new (see above).
+known = set()
+if os.environ.get("REBASE_KNOWN"):
+    refs = ["HEAD"]
+    try:
+        with open(os.path.join(os.environ["GITDIR"], "rebase-merge", "stopped-sha"), "rb") as fh:
+            refs.append(fh.read().strip().decode("ascii", "replace"))
+    except OSError:
+        pass
+    for ref in refs:
+        tree = subprocess.run(["git", "ls-tree", "-r", "-z", "--", ref], capture_output=True)
+        if tree.returncode == 0:
+            known.update(e.split(b"\t")[0].split(b" ")[2] for e in tree.stdout.split(b"\0") if b"\t" in e)
+listing = [e for e in run.stdout.split(b"\0") if e.partition(b"\t")[2] in wanted_names]
+wanted = []
+for entry in listing:
+    if not entry:
+        continue
+    meta, _, path = entry.partition(b"\t")
+    mode, sha, _stage = meta.split(b" ")
+    if mode in (b"100644", b"100755") and sha not in known:
+        wanted.append((sha, path))
+if not wanted:
+    sys.exit(0)
+cat = subprocess.Popen(["git", "cat-file", "--batch"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+
+
+def feed():
+    # From a thread, so git can send blobs back while ids are still going in: written all at
+    # once, both pipes fill and the two programs wait on each other.
+    try:
+        for sha, _ in wanted:
+            cat.stdin.write(sha + b"\n")
+    finally:
+        cat.stdin.close()
+
+
+import threading
+writer = threading.Thread(target=feed, daemon=True)
+writer.start()
+for n, (sha, path) in enumerate(wanted):
+    header = cat.stdout.readline().split()
+    if len(header) < 3:
+        break
+    data = cat.stdout.read(int(header[2]))
+    cat.stdout.read(1)
+    # Each file in a folder of its own, under its full path: two names that differ only in
+    # letter case, or a file and a folder of one name, cannot overwrite each other here.
+    rel = b"%d/" % n + path
+    target = os.path.join(dest.encode(), rel)
+    try:
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "wb") as fh:
+            fh.write(data)
+    except OSError:
+        with open(os.path.join(dest, ".notchecked"), "ab") as fh:     # reported as a block below
+            fh.write(path + b"\0")
+        continue
+    sys.stdout.buffer.write(rel + b"\0")
+writer.join()
+cat.wait()
+' "$tmp" > "$tmp/.list"; then
+  scan_failed "the staged files could not be copied for scanning"
+fi
+while IFS= read -r -d '' f; do
+  scan+=("$f")
+done < "$tmp/.list"
+notchecked=""
+if [ -s "$tmp/.notchecked" ]; then
+  while IFS= read -r -d '' f; do
+    notchecked="$notchecked$(printf 'HARD  %s:1:1  not-checked  could not be copied for scanning' "$f")
+"
+  done < "$tmp/.notchecked"
+fi
+[ ${#scan[@]} -eq 0 ] && [ -z "$notchecked" ] && exit 0
+
+# In batches of 200 files, so a commit of any size fits on a command line.
+# --security prints the hard findings and the hidden-text warnings, not the prose-style ones.
+# A deadline for each batch of 200 files: a file not finished by then is reported as not
+# checked, which blocks, rather than holding the commit for minutes. The temporary folder
+# names (0/, 1/, ...) are taken out of what is shown.
+all=""
+[ ${#scan[@]} -gt 0 ] && all="$(cd "$tmp" && printf '%s\0' "${scan[@]}" | xargs -0 -n 200 "$HYGIENE" --security --deadline 60 -- 2>/dev/null \
+  | sed -E 's#^(HARD|warn)( +)[0-9]+/#\1\2#')"
+status=$?          # pipefail is on: the scanner's exit, not sed's
+report="$(printf '%s%s\n' "$notchecked" "$all" | grep '^HARD ' || true)"
+warnings="$(printf '%s\n' "$all" | grep '^warn ' | head -n 20 || true)"
+# The scanner prints one line per violation and exits non-zero when it found any (xargs passes
+# that on as 1 or 123, depending on the system). A non-zero exit with nothing printed means
+# the scanner did not do its job. If it could not even start (xargs 126 or 127: missing or not
+# executable), say so and let the commit through rather than block every commit on a broken
+# install; AI_HYGIENE_STRICT=1 blocks instead. If it started and then failed, the content may
+# be what broke it, so the commit is blocked.
+if [ "$status" -ne 0 ] && [ -z "$report" ] && [ "$status" -ne 126 ] && [ "$status" -ne 127 ]; then
+  echo "pre-commit: hygiene scanner failed part way (exit $status), so these files were not checked: commit blocked" >&2
+  echo "  (git commit --no-verify skips the check, after you have looked at the files yourself)" >&2
+  exit 1
+fi
+if [ "$status" -ne 0 ] && [ -z "$report" ]; then
+  if [ "${AI_HYGIENE_STRICT:-0}" = "1" ]; then
+    echo "pre-commit: hygiene scanner failed to run (exit $status), and AI_HYGIENE_STRICT=1: commit blocked" >&2
+    exit 1
+  fi
+  echo "pre-commit: hygiene scanner failed to run (exit $status); check skipped" >&2
+  report=""
+fi
+
+if [ -n "$warnings" ]; then
+  {
+    echo
+    echo "Not blocking, but look at these before you push (hidden or look-alike text):"
+    echo
+    echo "$warnings"
+    echo
+  } >&2
+fi
 
 if [ -n "$report" ]; then
   {
@@ -46,15 +250,24 @@ if [ -n "$report" ]; then
     echo "Fix them, or opt a file out with  hygiene:ignore-file  in its first 30 lines"
     echo "if it must legitimately contain these characters (test fixtures, reference docs)."
     echo
-    echo "To bypass once:  AI_HYGIENE_SKIP=1 git commit ..."
+    if [ "${AI_HYGIENE_AM:-0}" = "1" ]; then
+      echo "Fix the files and run  git am --continue,  or bypass once:  AI_HYGIENE_SKIP=1 git am --continue"
+    else
+      echo "To bypass once:  AI_HYGIENE_SKIP=1 git commit ..."
+    fi
     echo
   } >&2
   exit 1
 fi
 
-# Advisory: unresolved imports. Never blocks.
-if [ -x "$CHECKDEPS" ]; then
-  deps="$("$CHECKDEPS" "${staged[@]}" 2>/dev/null)"
+# Advisory: unresolved imports. Never blocks. It reads the working tree, where the
+# manifests are, so it can differ slightly from what is staged.
+worktree=()
+for f in "${staged[@]}"; do
+  [ -f "$f" ] && [ ! -L "$f" ] && worktree+=("$f")
+done
+if [ -x "$CHECKDEPS" ] && [ ${#worktree[@]} -gt 0 ]; then
+  deps="$(printf '%s\0' "${worktree[@]}" | xargs -0 -n 200 "$CHECKDEPS" -- 2>/dev/null)"
   if [ -n "$deps" ]; then
     {
       echo

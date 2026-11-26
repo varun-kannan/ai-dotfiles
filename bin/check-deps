@@ -8,15 +8,27 @@ supply-chain question, not a style question.
 
 Usage:  check-deps FILE [FILE ...] [--root DIR]
 
-Advisory only - always exits 0. False positives are expected for monorepo path
-aliases, namespace packages, and transitive imports. Treat output as "verify
+Advisory only - exits 0 whatever it finds (2 on a usage error). False positives are expected for monorepo path
+aliases, namespace packages, and transitive imports. Modules of the project itself (a file
+or folder with that name beside the importing file, above it, or under src/, lib/, tests/, test/ or scripts/)
+and the standard library are not reported. Treat output as "verify
 these", not "these are wrong".
 """
+import os
+import sys
+
+# Run isolated (python3 -I): no PYTHONPATH, no user site, and not the current folder on the
+# module path, which may be a repository with a file named like a standard module. A start
+# without -I (from a #! line or a hook command) restarts once with it.
+if not sys.flags.isolated and __name__ == "__main__":
+    os.execv(sys.executable, [sys.executable, "-I", os.path.abspath(__file__)] + sys.argv[1:])
 import argparse
 import json
-import os
+import shlex
+import signal
+import stat
 import re
-import sys
+import time
 
 PY_STDLIB = set("""
 abc aifc argparse array ast asyncio base64 bdb binascii bisect builtins bz2
@@ -46,15 +58,18 @@ string_decoder sys timers tls trace_events tty url util v8 vm wasi worker_thread
 zlib
 """.split())
 
-PY_RE = [
-    re.compile(r"^\s*import\s+([A-Za-z_][\w.]*)", re.M),
-    re.compile(r"^\s*from\s+([A-Za-z_][\w.]*)\s+import", re.M),
-]
+PY_IMPORT = re.compile(r"^[ \t]*import[ \t]+([^\n#]+)", re.M)
+PY_FROM = re.compile(r"^[ \t]*from[ \t]+([A-Za-z_][\w.]*)[ \t]+import", re.M)
 JS_RE = [
-    re.compile(r"""^\s*import\s+(?:.*?\s+from\s+)?['"]([^'"]+)['"]""", re.M),
-    re.compile(r"""\brequire\(\s*['"]([^'"]+)['"]\s*\)"""),
-    re.compile(r"""\bimport\(\s*['"]([^'"]+)['"]\s*\)"""),
+    # Each pattern stays on one line, so a long file costs its length and no more. The first
+    # finds the end of any import or export statement, however many lines it began on:
+    # import x from 'p'; import {a,\n b} from 'p'; export * from 'p'
+    re.compile(r"""\bfrom[ \t]*['"]([^'"\n]+)['"]"""),
+    re.compile(r"""^[ \t]*import[ \t]*['"]([^'"\n]+)['"]""", re.M),
+    re.compile(r"""\brequire\([ \t]*['"]([^'"\n]+)['"][ \t]*\)"""),
+    re.compile(r"""\bimport\([ \t]*['"]([^'"\n]+)['"][ \t]*\)"""),
 ]
+TIME_BUDGET = 8.0          # seconds for one run; it is an advisory check and must not stall a commit
 
 # Import name -> distribution name, where they differ commonly enough to matter.
 ALIAS = {
@@ -63,6 +78,64 @@ ALIAS = {
     "dateutil": "python-dateutil", "serial": "pyserial", "OpenSSL": "pyopenssl",
     "attr": "attrs", "google": "protobuf", "psycopg2": "psycopg2-binary",
 }
+
+
+READ_LIMIT = 1000000
+MAX_REQUIREMENTS = 20      # requirements*.txt files read per project
+
+
+def read_small(path):
+    """Text of a regular file, at most 1 MB, or "". Symlinks are not followed: a hostile repo
+    can commit requirements.txt -> /dev/zero, or hundreds of links to one large file."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    except OSError:
+        return ""
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return ""
+        chunks, left = [], READ_LIMIT
+        while left > 0:
+            chunk = os.read(fd, min(left, 1 << 16))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            left -= len(chunk)
+        return b"".join(chunks).decode("utf-8", "replace")
+    except OSError:
+        return ""
+    finally:
+        os.close(fd)
+
+
+def stdlib_names():
+    """The static list plus what this Python ships, so a module the list forgot is not reported."""
+    names = set(PY_STDLIB) | {"__main__", "pip", "setuptools", "pkg_resources", "wheel", "msvcrt", "winreg", "winsound", "_winapi",
+                                     "nt", "posix", "pwd", "grp", "termios", "fcntl", "resource", "_overlapped"} | set(sys.builtin_module_names) | set(getattr(sys, "stdlib_module_names", ()))
+    try:
+        import sysconfig
+        stdlib = sysconfig.get_paths()["stdlib"]
+        for folder in (stdlib, os.path.join(stdlib, "lib-dynload")):      # modules written in Python, then in C
+            for entry in os.listdir(folder):
+                names.add(entry.split(".")[0])
+    except (OSError, KeyError):
+        pass
+    return names
+
+
+def first_party(name, path, root):
+    """True when the import names a module or package of this project: a file or folder with
+    that name beside the importing file, in a folder above it up to the project root, or in
+    the root's src, lib or tests folder."""
+    folders, here = [], os.path.dirname(os.path.abspath(path))
+    top = os.path.abspath(root)
+    while True:
+        folders.append(here)
+        if here == top or os.path.dirname(here) == here or not here.startswith(top):
+            break
+        here = os.path.dirname(here)
+    folders += [os.path.join(top, d) for d in ("src", "lib", "tests", "test", "scripts")]
+    return any(os.path.lexists(os.path.join(f, name + ".py")) or os.path.isdir(os.path.join(f, name)) for f in folders)
 
 
 def norm(n):
@@ -82,97 +155,153 @@ def find_root(start):
 
 
 def declared(root):
-    """Collect declared dependency names from whatever manifests exist."""
+    """Collect declared dependency names from whatever manifests exist. None for a language with
+    no manifest at all (nothing to check against); an empty set for one that declares nothing."""
     js, py = set(), set()
     pj = os.path.join(root, "package.json")
-    if os.path.exists(pj):
-        try:
-            with open(pj) as fh:
-                data = json.load(fh)
-            for k in ("dependencies", "devDependencies", "peerDependencies",
-                      "optionalDependencies"):
-                js.update(norm(x) for x in (data.get(k) or {}))
-        except (ValueError, IOError):
-            pass
-    for fn in os.listdir(root):
-        if fn.startswith("requirements") and fn.endswith(".txt"):
-            try:
-                with open(os.path.join(root, fn)) as fh:
-                    for ln in fh:
-                        ln = ln.split("#")[0].strip()
-                        if ln and not ln.startswith("-"):
-                            py.add(norm(re.split(r"[<>=!\[ ;]", ln)[0]))
-            except IOError:
-                pass
+    has_js = os.path.isfile(pj)
+    try:
+        data = json.loads(read_small(pj) or "{}")
+    except ValueError:
+        data = {}
+    if isinstance(data, dict):
+        for k in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
+            js.update(norm(x) for x in (data.get(k) if isinstance(data.get(k), dict) else {}))
+    try:
+        names = os.listdir(root)
+    except OSError:
+        names = []
+    for fn in sorted(n for n in names if n.startswith("requirements") and n.endswith(".txt"))[:MAX_REQUIREMENTS]:
+        for ln in read_small(os.path.join(root, fn)).splitlines():
+            egg = re.search(r"#egg=([A-Za-z0-9_.-]+)", ln)       # -e git+https://...#egg=name
+            ln = ln.split("#")[0].strip()
+            if egg:
+                py.add(norm(egg.group(1)))
+            if ln and not ln.startswith("-"):
+                py.add(norm(re.split(r"[<>=!\[ ;]", ln)[0]))
     pt = os.path.join(root, "pyproject.toml")
+    has_py = os.path.exists(pt) or any(n.startswith("requirements") and n.endswith(".txt") for n in names)
     if os.path.exists(pt):
-        try:
-            with open(pt) as fh:
-                for ln in fh:
-                    m = re.match(r"""\s*["']?([A-Za-z0-9_.-]+)["']?\s*[<>=~^"']""", ln)
-                    if m:
-                        py.add(norm(m.group(1)))
-        except IOError:
-            pass
-    return js, py
+        text = read_small(pt)
+        # Requirement strings anywhere in the file, on one line or many:
+        # dependencies = ["requests>=2", "rich[jupyter]"], optional groups, build requires.
+        for name in re.findall(r"""["']([A-Za-z0-9][A-Za-z0-9_.-]{0,200})[ \t]{0,8}(?:\[[^\]"'\n]{0,200}\])?[ \t]{0,8}(?:[<>=~!;@][^"'\n]{0,500})?["']""", text):
+            py.add(norm(name))
+        # Tables keyed by package name (Poetry, PDM): name = "^1.2" under a dependencies section.
+        section = ""
+        for ln in text.splitlines():
+            ln = ln.strip()
+            if ln.startswith("["):
+                section = ln.strip("[]").strip().lower()
+            elif "dependencies" in section:
+                m = re.match(r"""["']?([A-Za-z0-9][A-Za-z0-9_.-]*)["']?\s*=""", ln)
+                if m:
+                    py.add(norm(m.group(1)))
+    return (js if has_js else None), (py if has_py else None)
 
 
-def imports(path, text):
+def imports(path, text, root="."):
     ext = os.path.splitext(path)[1].lower()
     found = set()
+    stdlib = stdlib_names() if ext in (".py", ".pyi") else ()
     if ext in (".py", ".pyi"):
-        for r in PY_RE:
-            for m in r.findall(text):
-                top = m.split(".")[0]
-                if top and top not in PY_STDLIB:
-                    found.add(("py", top))
+        text = re.sub(r'''(?s)("""|\'\'\').*?\1''', "", text)        # an import inside a docstring is not an import
+        names = PY_FROM.findall(text)
+        for line in PY_IMPORT.findall(text):                 # import a, b.c as d
+            names += [part.strip().split(" ")[0] for part in line.split(",")]
+        for m in names:
+            top = m.split(".")[0]
+            # ASCII only and of a sane length: a name is printed to the model, so it must be a
+            # name, not a sentence in any script.
+            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,99}", top or "") and top not in stdlib and not first_party(top, path, root):
+                found.add(("py", top))
     elif ext in (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"):
+        # Comments and template literals are not imports. One linear pass keeps string contents
+        # (the specifiers) and blanks the rest.
+        text = re.sub(r"""//[^\n]*|/\*.*?\*/|`(?:\\.|[^`\\])*`|('(?:\\.|[^'\\\n])*'|"(?:\\.|[^"\\\n])*")""",
+                      lambda m: m.group(1) or " ", text, flags=re.S)
         for r in JS_RE:
             for m in r.findall(text):
-                if m.startswith(".") or m.startswith("/") or m.startswith("#"):
-                    continue
-                m = m[5:] if m.startswith("node:") else m
-                if m in NODE_BUILTIN:
-                    continue
+                if m.startswith((".", "/", "#", "~", "@/", "$")):
+                    continue              # relative paths and bundler aliases
+                if re.match(r"[A-Za-z][A-Za-z0-9+.-]*:", m) and not m.startswith("node:"):
+                    continue              # bun:test, npm:x, jsr:x, https://..., virtual:x
+                if m.startswith("node:") or m in NODE_BUILTIN or m.split("/")[0] in NODE_BUILTIN:
+                    continue              # fs, and its subpaths such as fs/promises
                 parts = m.split("/")
                 pkg = "/".join(parts[:2]) if m.startswith("@") else parts[0]
-                found.add(("js", pkg))
+                # Only a name npm could publish. Anything else ("x; curl ... | sh") is not a
+                # package, and printing it would hand project text to the model as a command.
+                if NPM_NAME.fullmatch(pkg) and len(pkg) <= 214:
+                    found.add(("js", pkg))
     return found
+
+
+NPM_NAME = re.compile(r"(?:@[A-Za-z0-9~-][A-Za-z0-9._~-]*/)?[A-Za-z0-9~-][A-Za-z0-9._~-]*")
+
+
+def _out_of_time(signum, frame):
+    sys.stdout.flush()
+    print("check-deps: stopped after %d seconds; the check is advisory and did not finish" % TIME_BUDGET, file=sys.stderr)
+    sys.stderr.flush()
+    os._exit(0)
+
+
+def run_with_time_limit():
+    """main() under a hard limit on the whole run, parsing included, so no file can make it
+    hold up a commit. Only for the command: the alarm belongs to the process it runs in."""
+    if hasattr(signal, "SIGALRM") and TIME_BUDGET > 0:
+        signal.signal(signal.SIGALRM, _out_of_time)
+        signal.alarm(int(TIME_BUDGET) + 1)
+    try:
+        return main()
+    finally:
+        if hasattr(signal, "SIGALRM"):
+            signal.alarm(0)
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("files", nargs="+")
+    ap.add_argument("files", nargs="*")
     ap.add_argument("--root")
-    a = ap.parse_args()
+    a, unknown = ap.parse_known_args()
+    if unknown:
+        ap.error("unknown option: %s" % " ".join(unknown))
+    if not a.files:
+        ap.error("no files given")
 
     unresolved = []
+    manifests, started = {}, time.monotonic()
+
+    def found(p, name, reg, cmd):
+        # Printed at once, so a run that runs out of time still reports what it saw.
+        unresolved.append(p)
+        print("verify  %s  imports %s - not declared in manifest (%s)\n        check: %s" % (ascii(p)[1:-1], ascii(name), reg, cmd), flush=True)
     for p in a.files:
         if not os.path.isfile(p):
             continue
-        try:
-            with open(p, "rb") as fh:
-                text = fh.read().decode("utf-8")
-        except (IOError, UnicodeDecodeError):
+        text = read_small(p)
+        if not text:
             continue
         root = a.root or find_root(p)
         if not root:
             continue
-        js, py = declared(root)
-        if not js and not py:
+        if time.monotonic() - started > TIME_BUDGET:
+            break
+        if root not in manifests:
+            manifests[root] = declared(root)
+        js, py = manifests[root]
+        if js is None and py is None:
             continue
-        for lang, name in sorted(imports(p, text)):
+        for lang, name in sorted(imports(p, text, root)):
             if lang == "py":
                 cand = {norm(name), norm(ALIAS.get(name, name))}
-                if py and not (cand & py):
-                    unresolved.append((p, name, "PyPI", "pip index versions %s" % name))
+                if py is not None and not (cand & py):
+                    found(p, name, "PyPI", "pip index versions %s" % shlex.quote(ALIAS.get(name, name)))
             else:
-                if js and norm(name) not in js:
-                    unresolved.append((p, name, "npm", "npm view %s version" % name))
+                if js is not None and norm(name) not in js:
+                    found(p, name, "npm", "npm view %s version" % shlex.quote(name))
 
-    for p, name, reg, cmd in unresolved:
-        print("verify  %s  imports %r - not declared in manifest (%s)\n        check: %s"
-              % (p, name, reg, cmd))
     if unresolved:
         print("\n%d unresolved import(s). Confirm each exists and is declared before "
               "shipping. Unverifiable name -> do not import it." % len(unresolved))
@@ -180,4 +309,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run_with_time_limit())

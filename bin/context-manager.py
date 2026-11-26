@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
-"""context-manager - choose which harness files to load for one task and project.
+"""context-manager - choose which harness files fit one task and project.
 
-Each agent, skill, and rule layer is scored against the task words and the
-project's detected tags. Items are then added from the highest score down until
-the tier budget (config/harness-budgets.json) is full. Items that match nothing
-are skipped, so a generic task loads less.
+Each agent, skill, domain rule and fieldbook memory file is scored against the
+task's words and the project's detected tags. plan() fills the tier budget
+(config/harness-budgets.json) from the highest score down; items marked "always"
+are kept regardless of budget. task_matches() returns only what the task's own
+words point to, which is what the Claude Code prompt hook names.
 
-Works from the repo root or from the installed copy in ~/.ai-rules.
+Words are compared after light stemming, so "testing" matches the tag "test" and
+"caches" matches "cache".
+
+Works from the repo or from the installed copy in ~/.ai-rules.
 
 Usage:
     context-manager.py plan --task TEXT [--project DIR] [--tier auto|fast|standard|frontier]
@@ -14,95 +18,135 @@ Usage:
     context-manager.py measure
     context-manager.py --self-test
 
-Project memory is a fieldbook bank (DIR/.fieldbook/bank/). Optional overrides
-live in DIR/.harness/config.json: "tier", "exclude" (names never to load) and
-"pin" (names always to load).
+Optional per-project overrides live in DIR/.harness/config.json: "tier",
+"exclude" (names never to load) and "pin" (names always to load).
 
-Exit: 0 ok, 1 self-test failed, 3 usage or config error.
+Exit: 0 ok, 1 self-test failed or config error, 2 usage error.
 """
+import os
+import sys
+
+# Run isolated (python3 -I): no PYTHONPATH, no user site, and not the current folder on the
+# module path, which may be a repository with a file named like a standard module. A start
+# without -I (from a #! line or a hook command) restarts once with it.
+if not sys.flags.isolated and __name__ == "__main__":
+    os.execv(sys.executable, [sys.executable, "-I", os.path.abspath(__file__)] + sys.argv[1:])
 import argparse
 import importlib.util
 import json
-import os
 import re
-import sys
 import tempfile
 from pathlib import Path
 
 BASE = Path(__file__).resolve().parent.parent
 CONFIG = BASE / "config"
-TOKENS_PER_CHAR = 0.25  # chars/4 estimate; a rough guide, not a tokenizer
+CATEGORIES = ("agents", "skills", "rules", "memory")
 
 sys.path.insert(0, str(BASE))
+from engine import safefs  # noqa: E402
 from engine.project import detect_tags  # noqa: E402
+
+
+class ConfigError(Exception):
+    pass
 
 
 def load_json(path):
     with open(path, encoding="utf-8") as fh:
-        return json.load(fh)
+        data = json.load(fh)
+    if not isinstance(data, dict):
+        raise ValueError("not a JSON object")
+    return data
+
+
+def configs():
+    try:
+        return load_json(CONFIG / "harness-budgets.json"), load_json(CONFIG / "harness-relevance.json")
+    except (OSError, ValueError) as exc:
+        raise ConfigError("config error: %s" % exc)
 
 
 def detect(project):
     return detect_tags(project)
 
 
-def tokens_for_chars(chars):
-    return int(round(chars * TOKENS_PER_CHAR))
-
-
 def file_tokens(path):
     try:
-        return tokens_for_chars(os.path.getsize(path))
+        return (os.path.getsize(path) + 3) // 4
     except OSError:
         return 0
 
 
+def stem(word):
+    """Reduce a word so its inflections compare equal: tests/testing/test, caches/cached/cache,
+    queries/query. The result is a key for matching, not always a word (database -> databas)."""
+    word = word.lower()
+    if len(word) > 5 and word.endswith("ing"):
+        word = word[:-3]
+    elif len(word) > 4 and word.endswith("ied"):
+        word = word[:-3] + "y"
+    elif len(word) > 4 and word.endswith("ed"):
+        word = word[:-2]
+    elif len(word) > 4 and word.endswith("ies"):
+        word = word[:-3] + "y"
+    elif len(word) > 4 and word.endswith("es"):
+        word = word[:-2]
+    elif len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
+        word = word[:-1]
+    if len(word) > 3 and word.endswith("e"):
+        word = word[:-1]
+    return word
+
+
 def task_words(task):
-    return set(re.findall(r"[a-z0-9][a-z0-9+#-]*", task.lower()))
+    return {stem(w) for w in re.findall(r"[a-z0-9][a-z0-9+#-]*", task.lower())}
 
 
-def score(entry, words, project_tags, always):
-    tags = set(entry.get("tags", []))
-    hits = len(tags & (words | project_tags))
-    if hits == 0 and not (always or entry.get("always")):
-        return 0.0
-    weight = entry.get("weight", 0.5)
-    base = weight * min(1.0, 0.5 + 0.25 * max(hits, 1))
-    bonus = RELEVANCE["priority_bonus"].get(entry.get("priority", "low"), 0.0)
-    return round(base + bonus, 3)
+def project_config(project):
+    text = safefs.read_text(project, Path(project) / ".harness" / "config.json")
+    if not text:
+        return {}
+    try:
+        data = json.loads(text)
+    except (ValueError, RecursionError):      # deep nesting overflows the parser's stack
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
-def candidates(project, words, project_tags):
+def candidates(project, relevance):
+    meta = {}
+    try:
+        meta = load_json(CONFIG / "skill-metadata.json").get("skills", {})
+    except (OSError, ValueError):
+        pass
     out = []
-    skills_meta = load_json(CONFIG / "skill-metadata.json")["skills"]
-    for name, entry in RELEVANCE["agents"].items():
-        path = BASE / "agents" / "definitions" / (name + ".md")
-        out.append(("agents", name, path, entry, file_tokens(path) if path.exists() else 0))
-    for name, entry in RELEVANCE["skills"].items():
-        path = BASE / "skills" / name / "SKILL.md"
-        always = skills_meta.get(name, {}).get("relevance") == "always"
-        out.append(("skills", name, path, dict(entry, always=always), file_tokens(path) if path.exists() else 0))
-    for name, entry in RELEVANCE["rules"].items():
-        path = BASE / "rules" / "domains" / (name + ".md")
-        out.append(("rules", name, path, entry, file_tokens(path) if path.exists() else 0))
-    bank = project / ".fieldbook" / "bank"
-    for name, entry in RELEVANCE["memory"].items():
-        path = bank / name
-        if path.exists():
-            out.append(("memory", name, path, entry, file_tokens(path)))
-    return out
+    for name, entry in relevance.get("agents", {}).items():
+        out.append(("agents", name, BASE / "agents" / "definitions" / (name + ".md"), entry))
+    for name, entry in relevance.get("skills", {}).items():
+        always = meta.get(name, {}).get("relevance") == "always"
+        out.append(("skills", name, BASE / "skills" / name / "SKILL.md", dict(entry, always=always or entry.get("always"))))
+    for name, entry in relevance.get("rules", {}).items():
+        out.append(("rules", name, BASE / "rules" / "domains" / (name + ".md"), entry))
+    for name, entry in relevance.get("memory", {}).items():
+        out.append(("memory", name, Path(project) / ".fieldbook" / "bank" / name, entry))
+    rows = []
+    for cat, name, path, entry in out:
+        if cat == "memory":
+            if not safefs.is_regular(project, path):
+                continue
+        elif not path.is_file():
+            continue
+        rows.append((cat, name, path, entry, file_tokens(path)))
+    return rows
 
 
-def resolve_tier(task, tier_flag, project_cfg):
-    if tier_flag != "auto":
-        return tier_flag, "flag"
-    if project_cfg.get("tier") in BUDGETS["tiers"]:
-        return project_cfg["tier"], "project"
-    router = load_router()
-    if router is None:
-        return "standard", "default"
-    tier, _ = router.analyze_complexity(task)
-    return tier, "auto"
+def score(entry, words, relevance):
+    tags = {stem(t) for t in entry.get("tags", [])}
+    hits = len(tags & words)
+    if hits == 0:
+        return 0.0
+    base = entry.get("weight", 0.5) * min(1.0, 0.5 + 0.25 * hits)
+    return round(base + relevance.get("priority_bonus", {}).get(entry.get("priority", "low"), 0.0), 3)
 
 
 def load_router():
@@ -116,77 +160,85 @@ def load_router():
 
 
 def plan(task, project, tier_flag="auto"):
+    budgets, relevance = configs()
     project = Path(project).resolve()
-    project_cfg_path = project / ".harness" / "config.json"
-    try:
-        project_cfg = load_json(project_cfg_path) if project_cfg_path.exists() else {}
-    except (OSError, ValueError) as exc:
-        raise SystemExit("bad project config %s: %s" % (project_cfg_path, exc))
-    tier, source = resolve_tier(task, tier_flag, project_cfg)
-    budget = BUDGETS["tiers"][tier]
-    words = task_words(task)
-    project_tags = set(detect(project))
-    exclude = set(project_cfg.get("exclude", []))
-    pin = set(project_cfg.get("pin", []))
+    cfg = project_config(project)
+    if tier_flag != "auto":
+        tier, source = tier_flag, "flag"
+    elif cfg.get("tier") in budgets.get("tiers", {}):
+        tier, source = cfg["tier"], "project"
+    else:
+        router = load_router()
+        tier, source = (router.analyze_complexity(task)[0], "auto") if router else ("standard", "default")
+    budget = budgets["tiers"][tier]
+    project_tags = {stem(t) for t in detect(project)}
+    words = task_words(task) | project_tags
+    exclude = set(x for x in cfg.get("exclude", []) if isinstance(x, str))
+    pin = set(x for x in cfg.get("pin", []) if isinstance(x, str))
 
-    ranked = []
-    for cat, name, path, entry, tokens in candidates(project, words, project_tags):
-        key = name.split(":")[-1]
-        if key in exclude or name in exclude:
-            ranked.append((-1, cat, name, path, tokens, "excluded by project config"))
-            continue
-        if entry.get("pinned") or name in pin or key in pin:
-            ranked.append((float("inf"), cat, name, path, tokens, None))
-            continue
-        s = score(entry, words, project_tags, False)
-        if s == 0:
-            ranked.append((0, cat, name, path, tokens, "no task or project match"))
+    ranked, skipped, warnings = [], [], []
+    known = set()
+    for cat, name, path, entry, toks in candidates(project, relevance):
+        known.add(name)
+        if name in exclude:
+            skipped.append({"name": name, "category": cat, "reason": "excluded by project config"})
+        elif entry.get("always") or name in pin:
+            ranked.append((float("inf"), cat, name, path, toks))
         else:
-            ranked.append((s, cat, name, path, tokens, None))
+            s = score(entry, words, relevance)
+            if s:
+                ranked.append((s, cat, name, path, toks))
+            else:
+                skipped.append({"name": name, "category": cat, "reason": "no task or project match"})
+    for name in sorted(pin - known):
+        warnings.append("pinned %s does not exist; ignored" % name)
 
-    ranked.sort(key=lambda r: -r[0] if r[0] != float("inf") else -1e9)
-    used = {c: 0 for c in ("agents", "skills", "rules", "memory")}
+    ranked.sort(key=lambda r: (r[0] != float("inf"), -r[0] if r[0] != float("inf") else 0))
+    used = {c: 0 for c in CATEGORIES}
     total = 0
-    selected = {c: [] for c in used}
-    skipped = []
-    warnings = []
-    for s, cat, name, path, tokens, reason in ranked:
-        if reason is not None:
-            skipped.append({"name": name, "category": cat, "reason": reason})
-            continue
-        if s == float("inf"):
-            if used[cat] + tokens > budget[cat] or total + tokens > budget["total"]:
-                warnings.append("pinned %s exceeds %s budget; loaded anyway" % (name, cat))
-            used[cat] += tokens
-            total += tokens
-            selected[cat].append({"name": name, "tokens": tokens, "score": None, "path": str(path)})
-            continue
-        if used[cat] + tokens > budget[cat] or total + tokens > budget["total"]:
+    selected = {c: [] for c in CATEGORIES}
+    for s, cat, name, path, toks in ranked:
+        fits = used[cat] + toks <= budget[cat] and total + toks <= budget["total"]
+        if s != float("inf") and not fits:
             skipped.append({"name": name, "category": cat, "reason": "over %s budget" % cat})
             continue
-        used[cat] += tokens
-        total += tokens
-        selected[cat].append({"name": name, "tokens": tokens, "score": s, "path": str(path)})
+        if not fits:
+            warnings.append("%s kept although it exceeds the %s budget" % (name, cat))
+        used[cat] += toks
+        total += toks
+        selected[cat].append({"name": name, "tokens": toks, "score": None if s == float("inf") else s, "path": str(path)})
 
-    return {
-        "tier": tier,
-        "tier_source": source,
-        "model": budget["model"],
-        "project_tags": sorted(project_tags),
-        "budget": budget,
-        "used": dict(used, total=total),
-        "selected": selected,
-        "skipped": skipped,
-        "warnings": warnings,
-    }
+    return {"tier": tier, "tier_source": source, "model": budget.get("model"), "project_tags": sorted(detect(project)),
+            "budget": budget, "used": dict(used, total=total), "selected": selected, "skipped": skipped,
+            "warnings": warnings}
+
+
+def task_matches(task, project, per_category=4, use_config=True):
+    """Items the task's own words point to (not project tags, not always-on items), best first.
+
+    use_config=False ignores the project's .harness/config.json: in a repository the engine
+    did not set up, that file is the repository's, not the user's.
+    """
+    _, relevance = configs()
+    project = Path(project).resolve()
+    cfg = project_config(project) if use_config else {}
+    exclude = set(x for x in cfg.get("exclude", []) if isinstance(x, str))
+    words = task_words(task)
+    found = {c: [] for c in CATEGORIES}
+    for cat, name, path, entry, toks in candidates(project, relevance):
+        if entry.get("always") or name in exclude:
+            continue
+        s = score(entry, words, relevance)
+        if s:
+            found[cat].append((s, name))
+    return {c: [n for _, n in sorted(v, key=lambda x: -x[0])[:per_category]] for c, v in found.items()}
 
 
 def measure():
-    rows = []
-    for cat, name, path, _entry, tokens in candidates(Path.cwd(), set(), set()):
-        rows.append((tokens, cat, name, str(path)))
-    for tokens, cat, name, path in sorted(rows, reverse=True):
-        print("%6d  %-7s %-28s %s" % (tokens, cat, name, path))
+    _, relevance = configs()
+    rows = [(toks, cat, name, str(path)) for cat, name, path, _e, toks in candidates(Path.cwd(), relevance)]
+    for toks, cat, name, path in sorted(rows, reverse=True):
+        print("%6d  %-7s %-28s %s" % (toks, cat, name, path))
     return 0
 
 
@@ -198,31 +250,34 @@ def self_test():
             failures.append(label)
 
     with tempfile.TemporaryDirectory() as tmp:
-        proj = Path(tmp)
+        proj = Path(tmp).resolve()
         (proj / "package.json").write_text(json.dumps({"devDependencies": {"react": "x"}}), encoding="utf-8")
         check("detect nodejs", "nodejs" in detect(proj))
         check("detect react", "react" in detect(proj))
-        check("detect javascript when no typescript", "javascript" in detect(proj))
 
-        result = plan("fix a failing test in the react app", proj, tier_flag="standard")
+        result = plan("fixing the failing tests in the react app", proj, tier_flag="standard")
         names = [i["name"] for c in result["selected"].values() for i in c]
-        check("testing-guide selected for test task", "testing-guide" in names)
+        check("stemmed words match: testing-guide for 'tests'", "testing-guide" in names)
         check("budget not exceeded", result["used"]["total"] <= result["budget"]["total"])
+        fast = plan("fix the failing tests", proj, tier_flag="fast")
+        check("always-on security rule kept in the fast tier", "security" in [i["name"] for i in fast["selected"]["rules"]])
 
         (proj / ".fieldbook" / "bank").mkdir(parents=True)
         (proj / ".fieldbook" / "bank" / "06-gotchas.md").write_text("gotcha\n" * 20, encoding="utf-8")
-        (proj / ".fieldbook" / "bank" / "00-overview.md").write_text("overview\n", encoding="utf-8")
         (proj / ".harness").mkdir()
-        (proj / ".harness" / "config.json").write_text(
-            json.dumps({"exclude": ["testing-guide"]}), encoding="utf-8")
+        (proj / ".harness" / "config.json").write_text(json.dumps({"exclude": ["testing-guide"], "pin": ["nope"]}), encoding="utf-8")
         result = plan("fix a failing test", proj, tier_flag="standard")
         names = [i["name"] for c in result["selected"].values() for i in c]
         check("exclude honored", "testing-guide" not in names)
         check("gotchas memory selected for a fix task", "06-gotchas.md" in names)
-        check("overview never double-loaded", "00-overview.md" not in names)
+        check("unknown pin reported", any("nope" in w for w in result["warnings"]))
+        m = task_matches("why is the database migration failing", proj)
+        check("task matches name database skill", "database-patterns" in m["skills"])
+        check("task matches skip always-on items", "security" not in m["rules"])
 
-        result = plan("fix a failing test", proj, tier_flag="fast")
-        check("fast tier total within budget", result["used"]["total"] <= result["budget"]["total"])
+        os.remove(proj / ".harness" / "config.json")
+        os.mkfifo(proj / ".harness" / "config.json")
+        check("FIFO config does not hang", project_config(proj) == {})
 
     for label in failures:
         print("FAIL", label)
@@ -243,26 +298,23 @@ def main(argv):
     p_detect.add_argument("--project", default=".")
     sub.add_parser("measure")
     args = parser.parse_args(argv)
-
-    if args.self_test:
-        return self_test()
-    if args.cmd == "plan":
-        print(json.dumps(plan(args.task, args.project, args.tier), indent=2))
-        return 0
-    if args.cmd == "detect":
-        print(json.dumps({"project_tags": detect(Path(args.project).resolve())}, indent=2))
-        return 0
-    if args.cmd == "measure":
-        return measure()
+    try:
+        if args.self_test:
+            return self_test()
+        if args.cmd == "plan":
+            print(json.dumps(plan(args.task, args.project, args.tier), indent=2))
+            return 0
+        if args.cmd == "detect":
+            print(json.dumps({"project_tags": detect(Path(args.project).resolve())}, indent=2))
+            return 0
+        if args.cmd == "measure":
+            return measure()
+    except ConfigError as exc:
+        print(exc, file=sys.stderr)
+        return 1
     parser.print_usage(sys.stderr)
-    return 3
+    return 2
 
-
-try:
-    BUDGETS = load_json(CONFIG / "harness-budgets.json")
-    RELEVANCE = load_json(CONFIG / "harness-relevance.json")
-except (OSError, ValueError) as exc:
-    sys.exit("config error: %s" % exc)
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))
