@@ -1,8 +1,17 @@
-#!/usr/bin/env bash
-# Keeps the project harness current after a clone, checkout or merge.
-# Runs in the background and never blocks or fails the git command.
+#!/bin/bash
+# ai-dotfiles-hook: a hook that was here before is kept as <name>.local and runs first.
+# Keeps the project harness current after a clone, checkout or merge. It runs in the
+# background with a fixed system PATH from /, and never blocks or fails the git command,
+# even when the kept .local hook fails.
+# Only absolute PATH entries: an empty or relative one could pick up a program from the repo.
+_p=""; _ifs="$IFS"; IFS=:
+for _d in $PATH; do case "$_d" in /*) _p="${_p:+$_p:}$_d" ;; esac; done
+IFS="$_ifs"; PATH="${_p:-/usr/bin:/bin}"; export PATH
+if [ -x "$0.local" ]; then "$0.local" "$@" || true; fi
 H="${AI_RULES_HOME:-$HOME/.ai-rules}/bin/harness"
 if [ -x "$H" ]; then
-  ( env -u GIT_DIR -u GIT_INDEX_FILE -u GIT_WORK_TREE "$H" auto --trigger git --cwd "$PWD" >/dev/null 2>&1 & )
+  REPO="$PWD"
+  ( cd / && env -u GIT_DIR -u GIT_INDEX_FILE -u GIT_WORK_TREE PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+      "$H" auto --trigger git --cwd "$REPO" >/dev/null 2>&1 & )
 fi
 exit 0

@@ -12,6 +12,6 @@ Seven subagents are defined in `agents/definitions/`. Claude Code installs them 
 | performance-optimizer | sonnet | Read, Grep, Glob, Bash, Edit | Measures a baseline, changes one thing, re-measures. |
 | documentation-guide | sonnet | Read, Grep, Glob, Write, Edit | Updates docs and checks every claim against the code. |
 
-Model choice and token ranges per agent are in `config/routing-config.json`. The agent frontmatter sets the model Claude Code uses.
+The agent frontmatter sets the model Claude Code uses. `config/routing-config.json` lists the same choices with token ranges for reference; no code reads it.
 
 Agents are not specialized by language. Language rules and skills are chosen by the loader from the project's detected tags.

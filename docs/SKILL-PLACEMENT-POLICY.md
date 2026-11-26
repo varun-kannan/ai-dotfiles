@@ -17,6 +17,7 @@
 - Codex: `~/.codex/skills/`.
 - Gemini CLI: `~/.gemini/skills/`.
 - Hermes: `~/.hermes/skills/`.
+- ChatGPT: `~/.chatgpt/skills/`, a local reference copy the app does not read.
 - OpenCode: reads `~/.claude/skills/`, so it gets no separate copy.
 - Cursor: no skill folder. Its project rules are `.cursor/rules/*.mdc`, which the harness does not generate yet.
 - Devin: no local skill folder. Its repo instructions are `AGENTS.md`.

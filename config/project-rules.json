@@ -16,48 +16,173 @@
   },
   "tags": {
     "nodejs": {
-      "do": ["Await every promise and give every outbound call a timeout.", "Install from the lockfile and keep it committed."],
-      "dont": ["Don't pass input to child_process.exec; use execFile or spawn with an argument array."]
+      "do": [
+        "Await every promise and give every outbound call a timeout.",
+        "Install from the lockfile and keep it committed."
+      ],
+      "dont": [
+        "Don't pass input to child_process.exec; use execFile or spawn with an argument array."
+      ]
     },
     "typescript": {
-      "do": ["Type external input as unknown and narrow it at the boundary."],
-      "dont": ["Don't use any or a non-null assertion to silence the compiler."]
+      "do": [
+        "Type external input as unknown and narrow it at the boundary."
+      ],
+      "dont": [
+        "Don't use any or a non-null assertion to silence the compiler."
+      ]
     },
     "react": {
-      "do": ["Derive values during render; keep effects for syncing with things outside React."],
-      "dont": ["Don't use an array index as the key of a list that reorders or filters."]
+      "do": [
+        "Derive values during render; keep effects for syncing with things outside React."
+      ],
+      "dont": [
+        "Don't use an array index as the key of a list that reorders or filters."
+      ]
     },
     "python": {
-      "do": ["Use the project's environment tool and annotate public function signatures."],
-      "dont": ["Don't use a bare except, a mutable default argument, or shell=True."]
+      "do": [
+        "Use the project's environment tool and annotate public function signatures."
+      ],
+      "dont": [
+        "Don't use a bare except, a mutable default argument, or shell=True."
+      ]
     },
     "rust": {
-      "do": ["Return Result and propagate with ?; run cargo clippy before finishing."],
-      "dont": ["Don't unwrap or expect on input from outside the program."]
+      "do": [
+        "Return Result and propagate with ?; run cargo clippy before finishing."
+      ],
+      "dont": [
+        "Don't unwrap or expect on input from outside the program."
+      ]
     },
     "java": {
-      "do": ["Use try-with-resources and preserve the cause when wrapping an exception."],
-      "dont": ["Don't return null for a collection or catch Exception broadly."]
+      "do": [
+        "Use try-with-resources and preserve the cause when wrapping an exception."
+      ],
+      "dont": [
+        "Don't return null for a collection or catch Exception broadly."
+      ]
     },
     "kotlin": {
-      "do": ["Run blocking I/O on Dispatchers.IO inside a scope the caller owns."],
-      "dont": ["Don't swallow CancellationException or use !! without a stated reason."]
+      "do": [
+        "Run blocking I/O on Dispatchers.IO inside a scope the caller owns."
+      ],
+      "dont": [
+        "Don't swallow CancellationException or use !! without a stated reason."
+      ]
     },
     "go": {
-      "do": ["Wrap errors with %w and check them with errors.Is."],
-      "dont": ["Don't ignore a returned error."]
+      "do": [
+        "Wrap errors with %w and check them with errors.Is."
+      ],
+      "dont": [
+        "Don't ignore a returned error."
+      ]
     },
     "docker": {
-      "do": ["Pin base image versions and run as a non-root user."],
-      "dont": ["Don't put secrets in ENV, ARG or copied files."]
+      "do": [
+        "Pin base image versions and run as a non-root user."
+      ],
+      "dont": [
+        "Don't put secrets in ENV, ARG or copied files."
+      ]
     },
     "database": {
-      "do": ["Parameterize every query and review the lock each migration statement takes."],
-      "dont": ["Don't deploy code that needs a column before its migration has run."]
+      "do": [
+        "Parameterize every query and review the lock each migration statement takes."
+      ],
+      "dont": [
+        "Don't deploy code that needs a column before its migration has run."
+      ]
     },
     "ci": {
-      "do": ["Give workflows the minimum permissions and install from the lockfile."],
-      "dont": ["Don't hide a failing step with continue-on-error."]
+      "do": [
+        "Give workflows the minimum permissions and install from the lockfile."
+      ],
+      "dont": [
+        "Don't hide a failing step with continue-on-error."
+      ]
+    },
+    "ruby": {
+      "do": [
+        "Run the test suite with bundle exec and keep Gemfile.lock committed."
+      ],
+      "dont": [
+        "Don't interpolate input into SQL fragments or shell backticks."
+      ]
+    },
+    "php": {
+      "do": [
+        "Use prepared statements and escape output for its context."
+      ],
+      "dont": [
+        "Don't concatenate request input into queries, includes or shell calls."
+      ]
+    },
+    "dotnet": {
+      "do": [
+        "Use async all the way and pass CancellationToken through."
+      ],
+      "dont": [
+        "Don't block on async code with .Result or .Wait()."
+      ]
+    },
+    "swift": {
+      "do": [
+        "Prefer value types and handle errors with throws or Result."
+      ],
+      "dont": [
+        "Don't force-unwrap optionals from outside input."
+      ]
+    },
+    "dart": {
+      "do": [
+        "Keep null safety on and run the analyzer before finishing."
+      ],
+      "dont": [
+        "Don't use the ! operator on values that can be null."
+      ]
+    },
+    "flutter": {
+      "do": [
+        "Keep widgets small and move work off the UI thread."
+      ],
+      "dont": [
+        "Don't call setState after dispose or do I/O in build()."
+      ]
+    },
+    "elixir": {
+      "do": [
+        "Let processes crash under a supervisor; match on {:ok, _} and {:error, _}."
+      ],
+      "dont": [
+        "Don't atomize untrusted strings with String.to_atom."
+      ]
+    },
+    "deno": {
+      "do": [
+        "Grant only the permissions a task needs."
+      ],
+      "dont": [
+        "Don't run with --allow-all."
+      ]
+    },
+    "scala": {
+      "do": [
+        "Model failures with Either or Try."
+      ],
+      "dont": [
+        "Don't throw from pure functions."
+      ]
+    },
+    "cpp": {
+      "do": [
+        "Use RAII and standard containers; build with warnings on."
+      ],
+      "dont": [
+        "Don't use raw new/delete or unchecked buffer copies."
+      ]
     }
   }
 }

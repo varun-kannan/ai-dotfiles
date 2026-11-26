@@ -2,7 +2,14 @@
 """
 Model router: analyze task complexity and suggest optimal Claude model.
 """
+import os
 import sys
+
+# Run isolated (python3 -I): no PYTHONPATH, no user site, and not the current folder on the
+# module path, which may be a repository with a file named like a standard module. A start
+# without -I (from a #! line or a hook command) restarts once with it.
+if not sys.flags.isolated and __name__ == "__main__":
+    os.execv(sys.executable, [sys.executable, "-I", os.path.abspath(__file__)] + sys.argv[1:])
 import json
 import re
 from collections import Counter
@@ -38,6 +45,8 @@ MODELS = {
     },
 }
 
+RANK = {"fast": 0, "standard": 1, "frontier": 2}
+
 FAST_KEYWORDS = [
     "format",
     "summarize",
@@ -53,6 +62,20 @@ FAST_KEYWORDS = [
     "check",
 ]
 
+# Small mechanical edits. Each counts double for the fast tier, and they are the one case
+# where the fast tier can win over a standard keyword ("fix the typo").
+TRIVIAL_KEYWORDS = [
+    "typo",
+    "spelling",
+    "rename",
+    "commit",
+    "push",
+    "whitespace",
+    "indent",
+    "capitalize",
+]
+TRIVIAL_MAX_CHARS = 120
+
 STANDARD_KEYWORDS = [
     "fix",
     "refactor",
@@ -65,11 +88,22 @@ STANDARD_KEYWORDS = [
     "optimize",
     "improve",
     "rewrite",
+    "update",
+    "upgrade",
+    "add",
+    "change",
+    "migrate",
+    "remove",
 ]
+
+# Words that widen a task from one place to many.
+SCOPE_KEYWORDS = ["across", "codebase", "everywhere", "every", "all", "entire", "whole"]
 
 FRONTIER_KEYWORDS = [
     "design",
+    "redesign",
     "architect",
+    "architecture",
     "strategy",
     "analyze",
     "research",
@@ -79,7 +113,18 @@ FRONTIER_KEYWORDS = [
     "compare",
     "novel",
     "complex",
+    "investigate",
+    "propose",
+    "intermittent",
+    "corruption",
+    "race",
+    "deadlock",
+    "concurrency",
+    "security",
+    "vulnerability",
+    "vulnerabilities",
 ]
+FRONTIER_PHRASES = ["root cause", "trade-off", "tradeoff", "trade off"]
 
 
 def analyze_complexity(task: str) -> tuple[str, dict]:
@@ -91,15 +136,18 @@ def analyze_complexity(task: str) -> tuple[str, dict]:
     words = re.findall(r"\b\w+\b", task_lower)
 
     # Count keyword matches
-    fast_score = sum(1 for w in words if w in FAST_KEYWORDS)
-    standard_score = sum(1 for w in words if w in STANDARD_KEYWORDS)
-    frontier_score = sum(1 for w in words if w in FRONTIER_KEYWORDS)
+    trivial = sum(1 for w in words if w in TRIVIAL_KEYWORDS)
+    fast_score = sum(1 for w in words if w in FAST_KEYWORDS) + 2 * trivial
+    standard_score = sum(1 for w in words if w in STANDARD_KEYWORDS) + sum(1 for w in words if w in SCOPE_KEYWORDS)
+    frontier_score = sum(1 for w in words if w in FRONTIER_KEYWORDS) + sum(1 for p in FRONTIER_PHRASES if p in task_lower)
+
+    keywords = fast_score + standard_score + frontier_score     # before the length and code adjustments
 
     # Heuristics
     task_length = len(task)
     word_count = len(words)
-    has_code = "```" in task or bool(re.search(r"function|class|def|const", task_lower))
-    has_multipart = task.count("and") + task.count("also") + task.count("plus")
+    has_code = "```" in task or bool(re.search(r"\b(function|class|def|const|import|return)\b\s*[\w({]", task))
+    has_multipart = sum(1 for w in words if w in ("and", "also", "plus"))
 
     # Score adjustments
     if has_code:
@@ -117,15 +165,25 @@ def analyze_complexity(task: str) -> tuple[str, dict]:
         "standard": standard_score,
         "frontier": frontier_score,
     }
-    tier = max(scores, key=scores.get)
-
-    # If no signals, default to standard
-    if sum(scores.values()) == 0:
-        tier = "standard"
+    # A short mechanical edit goes to the fast tier even beside a standard keyword
+    # ("fix the typo"), as long as nothing points higher.
+    small_edit = trivial and not frontier_score and not has_code and task_length <= TRIVIAL_MAX_CHARS \
+        and fast_score > standard_score
+    if small_edit:
+        tier = "fast"
+    elif frontier_score > standard_score:
+        tier = "frontier"
+    elif standard_score or frontier_score:
+        tier = "standard"            # a tie goes to standard
+    elif fast_score:
+        tier = "fast"                # the cheap tier needs a clear field: no other signal at all
+    else:
+        tier = "standard"            # no signal
 
     analysis = {
         "tier": tier,
         "scores": scores,
+        "keywords": keywords,
         "signals": {
             "task_length": task_length,
             "word_count": word_count,
@@ -148,11 +206,15 @@ def suggest_rerun(
     recommended_tier = tier
     current_tier = None
 
-    # Map model ID to tier
+    # Map model ID to tier, by exact id first, then by family name
+    low = current_model.lower()
     for t, m in MODELS.items():
-        if m["id"] in current_model or m["name"].lower() in current_model.lower():
+        if m["id"] == current_model or m["name"].lower() in low:
             current_tier = t
             break
+    if current_tier is None:
+        current_tier = ("fast" if "haiku" in low else "standard" if "sonnet" in low
+                        else "frontier" if any(f in low for f in ("opus", "fable", "mythos")) else None)
 
     if not current_tier:
         return {"error": "Could not identify current model", "task": task}
@@ -162,6 +224,10 @@ def suggest_rerun(
         MODELS[current_tier]["input_cost"] * input_tokens / 1_000_000
         + MODELS[current_tier]["output_cost"] * output_tokens / 1_000_000
     )
+
+    if not analysis["keywords"]:
+        return {"task": task[:100], "current_tier": current_tier, "verdict": "NO_SIGNAL",
+                "note": "The task has no keywords the router scores; no suggestion."}
 
     # Analyze efficiency
     result = {
@@ -182,7 +248,7 @@ def suggest_rerun(
             alt_model["input_cost"] * input_tokens / 1_000_000
             + alt_model["output_cost"] * output_tokens / 1_000_000
         )
-        savings_pct = round((1 - alt_cost / current_cost) * 100)
+        savings_pct = round((1 - alt_cost / current_cost) * 100) if current_cost else 0
         result["suggestions"].append(
             {
                 "action": "OVERPROVIDED",
@@ -201,7 +267,7 @@ def suggest_rerun(
             alt_model["input_cost"] * input_tokens / 1_000_000
             + alt_model["output_cost"] * output_tokens / 1_000_000
         )
-        savings_pct = round((1 - alt_cost / current_cost) * 100)
+        savings_pct = round((1 - alt_cost / current_cost) * 100) if current_cost else 0
         result["suggestions"].append(
             {
                 "action": "OVERPROVIDED",
@@ -214,14 +280,21 @@ def suggest_rerun(
                 "command": f"/model {alt_model['id']}",
             }
         )
-    elif current_tier == "fast" and recommended_tier in ["standard", "frontier"]:
+    elif RANK[current_tier] < RANK[recommended_tier]:
+        alt_model = MODELS[recommended_tier]
+        alt_cost = (
+            alt_model["input_cost"] * input_tokens / 1_000_000
+            + alt_model["output_cost"] * output_tokens / 1_000_000
+        )
         result["suggestions"].append(
             {
                 "action": "UNDERPOWERED",
-                "reason": f"Task is {recommended_tier}, but using Haiku",
-                "note": "Haiku may struggle with complex tasks. Consider re-running with Sonnet or Opus.",
-                "alternative": MODELS[recommended_tier]["name"],
-                "command": f"/model {MODELS[recommended_tier]['id']}",
+                "reason": f"Task is {recommended_tier}, but using {MODELS[current_tier]['name']}",
+                "note": "A weaker model may need retries on this kind of task, which can cost more than one run on the stronger model.",
+                "alternative": alt_model["name"],
+                "estimated_cost": round(alt_cost, 4),
+                "extra_cost_usd": round(alt_cost - current_cost, 4),
+                "command": f"/model {alt_model['id']}",
             }
         )
     elif current_tier == recommended_tier:
@@ -254,7 +327,11 @@ if __name__ == "__main__":
             sys.exit(1)
         task = sys.argv[2]
         current_model = sys.argv[3]
-        input_tokens = int(sys.argv[4])
-        output_tokens = int(sys.argv[5])
+        try:
+            input_tokens = int(sys.argv[4])
+            output_tokens = int(sys.argv[5])
+        except ValueError:
+            print("Error: input_tokens and output_tokens must be whole numbers", file=sys.stderr)
+            sys.exit(2)
         result = suggest_rerun(task, current_model, input_tokens, output_tokens)
         print(json.dumps(result, indent=2))

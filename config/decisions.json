@@ -1,30 +1,30 @@
 {
-  "_note": "Questions for engine/decide.py. flag: probability = sigmoid(bias + sum(weight x signal)); act when the calibrated probability reaches threshold. choice: softmax over per-option scores. Signals are 0-1 values computed in code by the caller. Starting weights are hand-set; engine learn refits flag weights from logged outcomes, at most 1.5 from the values here, and stores them in ~/.ai-rules/data/weights.json.",
+  "_note": "Questions for engine/decide.py. Each is a flag: probability = sigmoid(bias + sum(weight x signal)); True at or above threshold, None (unsure) within 0.15 below it, else False. explore: share of unsure answers acted on anyway, so outcomes exist below the threshold. learn: whether `harness learn` refits and calibrates the question; a refit stays within 1.5 of the weights here and is stored in ~/.ai-rules/data/weights.json.",
   "questions": {
     "is_project": {
       "type": "flag",
       "threshold": 0.6,
       "bias": -2.5,
       "weights": {
-        "has_git": 4.0,
-        "has_manifest": 4.0,
         "code_files": 4.0,
         "has_src": 1.5,
         "session_trigger": 1.0
       },
-      "signals": "has_git, has_manifest, has_src, session_trigger: 0 or 1. code_files: source files at the top level and in src/app/lib, divided by 5, capped at 1."
+      "signals": "Asked only for a folder with no git, no manifest and no wrapped project. code_files: source files at the top level and in src/app/lib, divided by 5, capped at 1. has_src, session_trigger (session or prompt trigger, not cd): 0 or 1. Not learned: no outcome measures it reliably.",
+      "learn": false
     },
     "pointer_useful": {
       "type": "flag",
       "threshold": 0.5,
-      "bias": -2.0,
+      "bias": -2.2,
       "weights": {
-        "new_specific": 3.0,
-        "first_prompt": 0.5,
-        "has_block": -0.5,
-        "short_prompt": -0.5
+        "new_specific": 3.6,
+        "first_prompt": 0.9,
+        "short_prompt": -0.6
       },
-      "signals": "new_specific: items matched by this prompt's own words and not yet named in the session, divided by 3, capped at 1. first_prompt, has_block (project already has a generated block), short_prompt (under 60 characters): 0 or 1."
+      "explore": 0.2,
+      "learn": true,
+      "signals": "new_specific: items this prompt's words point to that were not named earlier in the session, divided by 3, capped at 1. first_prompt, short_prompt (under 60 characters): 0 or 1. With these weights: three new items always act. Two act, except on a short prompt that is not the first, which is unsure. One is unsure on a first prompt that is not short, and otherwise no."
     },
     "model_suggestion_useful": {
       "type": "flag",
@@ -35,32 +35,9 @@
         "down_late": -3.0,
         "down_long": -3.0
       },
-      "signals": "gap: score gap between the recommended tier and the runner-up, divided by 4, capped at 1. down_late: a cheaper model suggested after the third prompt (switching then discards the prompt cache). down_long: a cheaper model suggested for a prompt over 1,500 characters."
-    },
-    "model_tier": {
-      "type": "choice",
-      "threshold": 0.0,
-      "options": {
-        "fast": {
-          "bias": 0.0,
-          "weights": {
-            "fast": 1.0
-          }
-        },
-        "standard": {
-          "bias": 0.2,
-          "weights": {
-            "standard": 1.0
-          }
-        },
-        "frontier": {
-          "bias": 0.0,
-          "weights": {
-            "frontier": 1.0
-          }
-        }
-      },
-      "signals": "fast, standard, frontier: the keyword and heuristic scores from skills/model-router/router.py."
+      "signals": "gap: score gap between the recommended tier and the runner-up, divided by 4, capped at 1. down_late: a cheaper model suggested after the third prompt (switching then discards the prompt cache). down_long: a cheaper model suggested for a prompt over 1,500 characters.",
+      "explore": 0.2,
+      "learn": true
     }
   }
 }

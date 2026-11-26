@@ -13,7 +13,7 @@ delivering anything written to a file.
 
 These run automatically and do not need to be invoked:
 
-- **PreToolUse on Write/Edit** blocks the write on a hard violation and returns
+- **PreToolUse on Write/Edit/NotebookEdit** blocks the write on a hard violation and returns
   the findings. If a write is blocked, fix the content; do not work around the
   check by writing through a shell heredoc.
 - **PostToolUse on Write/Edit** reports imports missing from the manifest.

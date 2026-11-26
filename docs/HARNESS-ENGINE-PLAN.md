@@ -2,7 +2,11 @@
 
 Goal: a root-level engine that sets up every project on its own, keeps that setup current as the project changes, tracks the project's information, logs and decisions, and holds token use under a measured cap. Decisions inside the engine go through a local decision engine modelled on typed decision models such as Jev.
 
-Status: phases 0 to 3 built, phase 4 built in local-only form, phase 5 done. What exists and how it behaves: `docs/ENGINE.md`.
+Status: this is the original design document, kept for the reasoning and the Jev comparison. It is not a description of what exists. `docs/ENGINE.md` is.
+
+Built: project detection, the two setup modes, the triggers, generation and regeneration, the token caps and `harness doctor`, the decision engine in a reduced form (three flag questions, a local scorer, outcome labelling for two of them, calibration, bounded refits), the split of the global rules, and self-update of the install.
+
+Not built, and described below as if planned: model backends (Haiku, Jev), the `score` and `choice` question types, cost fields on answers, expected-value gating, thresholds derived from outcomes, shadow mode, proposed diffs for rule text, retry or revert outcome signals, a `post-commit` trigger, and context selection or regeneration running through the decision engine (they use the loader's scoring and a change stamp). Model suggestions are not limited to conversation or subagent boundaries: a stronger model can be suggested on any prompt.
 
 ## Decided
 
