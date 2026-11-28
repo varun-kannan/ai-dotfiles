@@ -56,13 +56,22 @@ def _due(name, seconds):
 def _install_running():
     """True when another install holds the lock and its process is alive.
 
-    The lock is a symlink whose target is the installer's pid. An older installer used a
-    folder holding a pid file.
+    The lock is a symlink whose target is the installer's pid and process start time.
+    Older installers used a plain pid target or a folder holding a pid file.
     """
     lock = SHARED / ".install.lock"
     try:
-        pid = int(os.readlink(lock)) if lock.is_symlink() else int((lock / "pid").read_text().strip())
+        raw = os.readlink(lock) if lock.is_symlink() else (lock / "pid").read_text().strip()
+        pid_text, separator, started = raw.partition(":")
+        pid = int(pid_text)
         os.kill(pid, 0)
+        if separator:
+            if not started:
+                return False
+            env = dict(os.environ, LC_ALL="C")
+            ps = subprocess.run(["/bin/ps", "-o", "lstart=", "-p", str(pid)], capture_output=True,
+                                text=True, timeout=5, env=env)
+            return ps.returncode == 0 and ps.stdout.replace(" ", "").strip() == started
         ps = subprocess.run(["/bin/ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True, timeout=5)
         return bool(re.search(r"(^|[ /])install\.sh( |$)", ps.stdout.strip()))    # a reused pid is not an install
     except (OSError, ValueError, subprocess.SubprocessError):

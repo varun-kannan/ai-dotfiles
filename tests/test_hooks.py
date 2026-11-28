@@ -423,7 +423,7 @@ class Tools(Sandbox):
             self.assertEqual(self.guard({"file_path": path, "content": dirty}).returncode, 2, path)
         # The tooling's names are exempt only where it is installed.
         for path in (str(self.shared / "bin" / "content-hygiene"), str(self.home / ".claude" / "hooks" / "pre-write-guard.sh"),
-                     "/h/.claude/skills/ai-content-forensics/reference/forensics-text.md"):
+                     str(self.home / ".claude" / "skills" / "ai-content-forensics" / "reference" / "forensics-text.md")):
             self.assertEqual(self.guard({"file_path": path, "content": dirty}).returncode, 0, path)
 
     def test_opt_out_marker_must_be_in_the_file_not_in_the_edit(self):

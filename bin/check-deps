@@ -30,7 +30,7 @@ import stat
 import re
 import time
 
-PY_STDLIB = set("""
+PY_STDLIB_39 = set("""
 abc aifc argparse array ast asyncio base64 bdb binascii bisect builtins bz2
 calendar cgi cmath cmd codecs collections colorsys concurrent configparser
 contextlib contextvars copy copyreg csv ctypes curses dataclasses datetime dbm
@@ -44,11 +44,12 @@ pwd py_compile queue quopri random re readline reprlib resource runpy sched
 secrets select selectors shelve shlex shutil signal site smtplib socket
 socketserver sqlite3 ssl stat statistics string stringprep struct subprocess
 symtable sys sysconfig tabnanny tarfile telnetlib tempfile termios textwrap
-threading time timeit tkinter token tokenize tomllib trace traceback
+threading time timeit tkinter token tokenize trace traceback
 tracemalloc tty turtle types typing unicodedata unittest urllib uuid venv
 warnings wave weakref webbrowser wsgiref xml xmlrpc zipapp zipfile zipimport
 zlib zoneinfo __future__
 """.split())
+PY_STDLIB = set(sys.stdlib_module_names) if hasattr(sys, "stdlib_module_names") else PY_STDLIB_39
 
 NODE_BUILTIN = set("""
 assert async_hooks buffer child_process cluster console constants crypto dgram

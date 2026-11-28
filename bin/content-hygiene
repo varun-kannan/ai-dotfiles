@@ -515,13 +515,26 @@ dev top shop store club live news blog cloud page link click space website fun i
 network digital media social group zone tools agency studio design systems services support software codes host
 download security bank finance money pay win bet game games art lol africa berlin london nyc tokyo
 """.split())
+# A dotted prose token with one of these endings is much more likely to be a file than a
+# host. Real TLDs are too numerous and change too often for an offline exhaustive list.
+HOST_FILE_EXTENSIONS = set("""
+png jpg jpeg gif svg webp ico bmp tiff tif avif pdf txt text md markdown rst adoc asciidoc
+doc docx xls xlsx ppt pptx odt ods odp rtf epub mobi key numbers pages
+json jsonc json5 yaml yml toml xml html htm xhtml css scss sass less styl js mjs cjs ts tsx jsx
+vue svelte astro mdx twig erb ejs hbs mustache liquid njk
+py pyi rb go rs java kt kts c h cc cpp cxx hpp hh hxx cs php sh bash zsh fish ps1 bat cmd
+lock log csv tsv zip tar gz tgz bz2 xz 7z rar dmg pkg iso img apk ipa deb rpm msi exe dll so dylib wasm map ipynb sql
+mp3 mp4 mov avi mkv wav flac ogg webm m4a aac heic psd ai sketch fig xd otf ttf woff woff2 eot
+db sqlite sqlite3 env ini cfg conf properties gradle class jar war ear bin dat bak tmp swp o obj a lib
+""".split())
+HOST_MEMBER_WORDS = {"item", "items", "le", "std", "sum", "trans"}
 # IDNA maps these full stops to ".", so they part host labels as a dot does.
 HOST_DOTS = str.maketrans("\u3002\uff0e\uff61", "...")
 
 
-def _host_at(line, a, b, dotted=True):
+def _host_at(line, a, b, dotted=True, email=True):
     """The span of the host name that the word line[a:b] is part of, or None: a word after ://,
-    or, when dotted, a label in a dotted run that ends in a known top-level domain (x.com,
+    or, when dotted, a label in a dotted run with a plausible ASCII top-level label (x.com,
     user@x.com). A label may hold digits, "-" and "_" around the word (api-x.com, x1.com)."""
     line = line.translate(HOST_DOTS)
     s, e = a, b
@@ -531,12 +544,30 @@ def _host_at(line, a, b, dotted=True):
         e += 1
     if line[:s].endswith("://"):
         return s, e
-    # The last label must be a top-level domain, not a method of a name (x.to(...), x.co = ...),
-    # and the word must come before it.
+    email_match = re.search(r"([A-Za-z0-9._%+-]{1,})@$", line[:s]) if email else None
+    if email_match and "." in line[s:e]:
+        return s, e
+    # A plausible ASCII top-level label catches new and uncommon TLDs without treating common
+    # file names or method calls as hosts. The word must come before that final label.
     run = line[b:e].rstrip(".-_")
-    if dotted and "." in run and run.rsplit(".", 1)[1].lower() in HOST_TLDS and not re.match(r"[ \t]*[(=[]", line[e:]):
+    tld = run.rsplit(".", 1)[-1].lower()
+    plausible_tld = 2 <= len(tld) <= 24 and tld.isascii() and tld.isalpha() \
+        and tld not in HOST_FILE_EXTENSIONS and tld not in HOST_MEMBER_WORDS
+    if dotted and "." in run and plausible_tld and not re.match(r"[ \t]*(?:\(|[.][A-Za-z_]\w*[ \t]*\()", line[e:]):
         return s, e
     return None
+
+
+def _code_email_at(line, host_start):
+    """Whether an @ before a dotted code token is an email marker, not a matrix operator."""
+    if host_start < 1 or line[host_start - 1] != "@":
+        return False
+    local = re.search(r"[A-Za-z0-9._%+-]+$", line[:host_start - 1])
+    if not local:
+        return False                  # decorators and spaced matrix operators have no local part
+    # A one-character left operand is the conventional compact matrix form (W@x). A longer
+    # local part followed by a dot-TLD host has the security-sensitive user@host shape.
+    return len(local.group(0)) > 1
 
 
 def _native_idn_host(host):
@@ -663,7 +694,8 @@ BYTE_LITERAL_GAP = (r'''["'](?:[ \t\r\n]|\\\n|/\*.*?\*/|\#[^\n]*(?:\n|$)|'''
                     r'''(?:\+|\.\.|<<|,|\[|\]|\(|\)))*?(?:[bBrRuU]{0,2}|\$)["']''')
 BYTE_ESCAPE_GAP = r"(?:" + BYTE_LITERAL_GAP + r"|\\\n[ \t]*|\\z\s*)?"
 BYTE_ESCAPES = re.compile(BYTE_ESCAPE_ONE + "(?:" + BYTE_ESCAPE_GAP + BYTE_ESCAPE_ONE + "){2,}")
-# C, C++ and Go never join the elements of a list of strings ("\xc2", "\x85"): only adjacent literals.
+BYTE_ESCAPES_SAME_LITERAL = re.compile(BYTE_ESCAPE_ONE + r"(?:(?:\\\n[ \t]*|\\z\s*)?" + BYTE_ESCAPE_ONE + r"){2,}")
+# This variant excludes collection punctuation; language rules below decide which literal joins apply.
 BYTE_ESCAPES_ADJACENT = re.compile(BYTE_ESCAPE_ONE + "(?:" + BYTE_ESCAPE_GAP.replace(r"|,|\[|\]|\(|\)", "")
                                    + BYTE_ESCAPE_ONE + "){2,}")
 PERCENT_GAP = r'''(?:["'](?:[ \t\r\n]|/\*.*?\*/|\#[^\n]*(?:\n|$)|\+|\.\.)*?["'])?'''
@@ -877,6 +909,8 @@ CI_COMMAND_KEYS = {"run", "script", "command", "bash", "pwsh", "powershell", "en
 # step reads (a greeting, a label); the variable names, and a variable group or template, are exact.
 CI_ENV_KEYS = {"env", "variables"}
 CI_ENV_EXACT = {"name", "group", "template"}
+CI_WITH_EXACT = {"repository", "ref", "path", "registry-url", "server-url"}
+CI_WITH_FETCH = {"url", "uri", "host", "hostname", "endpoint", "server", "registry"}
 CI_KEY = re.compile(r"([ \t]*(?:-[ \t]+)*)([A-Za-z_][\w-]*)[ \t]*:(?:[ \t]+|[ \t]*\r?$)")
 YAML_BLOCK_START = re.compile(r"[|>][-+0-9]*[ \t]*(?:#.*)?\r?$")
 SHELL_ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
@@ -951,6 +985,7 @@ def _shell_mask(text, a, b, mask, folded=False):
             elif cmd and not SHELL_ASSIGN.match(word) and word not in SHELL_PREFIX:
                 mask[start:k] = bytes([2]) * (k - start)
                 cmd = False
+    _ci_mark_expressions(text, a, b, mask)
 
 
 def _ci_value(text, lines, starts, i, at, col, mask, command):
@@ -987,7 +1022,10 @@ def _ci_env(text, lines, starts, i, col, mask):
             # mapping (GitLab value: and description:), whose lines are read in turn.
             if value.strip() and not value.lstrip().startswith(("#", "{", "[")) \
                     and m.group(2).lower() not in CI_ENV_EXACT:
+                start = starts[i] + m.end()
                 i = _ci_value(text, lines, starts, i, m.end(), len(m.group(1)), mask, False)
+                end = starts[i - 1] + len(lines[i - 1])
+                _ci_mark_expressions(text, start, end, mask)
                 continue
         i += 1
     return i
@@ -1002,7 +1040,210 @@ def _ci_parent(lines, i, col):
     return ""
 
 
-def _ci_mask(text, mask):
+def _ci_ancestors(lines, i, col):
+    """The enclosing mapping keys, nearest first."""
+    out = []
+    for j in range(i - 1, -1, -1):
+        m = CI_KEY.match(lines[j])
+        if m and len(m.group(1)) < col:
+            out.append(m.group(2).lower())
+            col = len(m.group(1))
+    return out
+
+
+def _ci_fetch_input(key, value):
+    suffixes = ("-url", "_url", "-uri", "_uri", "-host", "_host", "-endpoint", "_endpoint",
+                "-server", "_server", "-registry", "_registry")
+    if key in CI_WITH_EXACT or "version" in key or key in CI_WITH_FETCH or key.endswith(suffixes):
+        return True
+    value = value.strip(" \t\r\n\"'")
+    return "://" in value or bool(re.search(r"(?:^|[/@])[^\s./]+(?:\.[^\s./]+)+(?::\d+)?(?:[/]|$)", value))
+
+
+def _ci_mark_expressions(text, a, b, mask):
+    """Restore exact spans after a CI value has been classified as command or display text."""
+    k = a
+    while k < b:
+        start = text.find("${{", k, b)
+        if start < 0:
+            break
+        end = _ci_expression_end(text, start, b)
+        if end is None:
+            break
+        mask[start:end] = bytes([2]) * (end - start)
+        k = end
+
+
+def _ci_mark_text(text, a, b, mask, exact):
+    mask[a:b] = bytes([2 if exact else 1]) * (b - a)
+    if not exact:
+        # Expressions resolve names and paths even when their surrounding value is display text.
+        _ci_mark_expressions(text, a, b, mask)
+
+
+def _ci_expression_end(text, start, limit):
+    """End of a GitHub expression; }} inside a single-quoted string is data."""
+    k, quoted = start + 3, False
+    while k < limit:
+        if quoted:
+            if text[k] == "'":
+                if k + 1 < limit and text[k + 1] == "'":
+                    k += 2
+                    continue
+                quoted = False
+        elif text[k] == "'":
+            quoted = True
+        elif text.startswith("}}", k):
+            return k + 2
+        k += 1
+    return None
+
+
+def _yaml_quoted_end(text, start, limit):
+    """Return the closing quote for a YAML flow scalar, or limit if it is unclosed."""
+    quote, k = text[start], start + 1
+    while k < limit:
+        if text[k] == "\\" and quote == '"':
+            k += 2
+            continue
+        if text[k] == quote:
+            if quote == "'" and k + 1 < limit and text[k + 1] == "'":
+                k += 2
+                continue
+            return k
+        k += 1
+    return limit
+
+
+def _ci_flow_values(text, a, b, mask, with_inputs):
+    """Mark flow-collection scalar values recursively; mapping keys remain exact."""
+    def value(k, stops, exact):
+        while k < b and text[k].isspace():
+            k += 1
+        if k >= b:
+            return k
+        if text[k] in "{[":
+            return collection(k, exact)
+        start = k
+        if text[k] in "\"'":
+            k = _yaml_quoted_end(text, k, b)
+            k = min(k + 1, b)
+        else:
+            while k < b and text[k] not in stops:
+                if text.startswith("${{", k):
+                    end = _ci_expression_end(text, k, b)
+                    if end is not None:
+                        k = end
+                        continue
+                k += 1
+        _ci_mark_text(text, start, k, mask, exact)
+        return k
+
+    def collection(k, inherited_exact):
+        opener = text[k]
+        closer = "}" if opener == "{" else "]"
+        k += 1
+        while k < b:
+            while k < b and (text[k].isspace() or text[k] == ","):
+                k += 1
+            if k >= b or text[k] == closer:
+                return min(k + 1, b)
+            if opener == "[":
+                k = value(k, ",]", inherited_exact)
+                continue
+            key_start = k
+            if text[k] in "\"'":
+                k = _yaml_quoted_end(text, k, b)
+                name = text[key_start + 1:k].lower()
+                k = min(k + 1, b)
+            else:
+                key = re.match(r"[A-Za-z_][\w-]*", text[k:b])
+                if not key:
+                    k += 1
+                    continue
+                name = key.group(0).lower()
+                k += key.end()
+            while k < b and text[k].isspace():
+                k += 1
+            if k >= b or text[k] != ":":
+                k = key_start + 1
+                continue
+            k += 1
+            while k < b and text[k].isspace():
+                k += 1
+            end = k
+            if end < b and text[end] in "\"'":
+                end = _yaml_quoted_end(text, end, b)
+            else:
+                while end < b and text[end] not in ",}":
+                    end += 1
+            exact = with_inputs and _ci_fetch_input(name, text[k:end])
+            k = value(k, ",}", exact)
+        return k
+
+    collection(next((k for k in range(a, b) if not text[k].isspace()), b), False)
+
+
+def _ci_flow_end(text, a):
+    """Return the end of the flow collection starting at or after a."""
+    start = next((k for k in range(a, len(text)) if not text[k].isspace()), len(text))
+    stack, quote, k = [], None, start
+    while k < len(text):
+        c = text[k]
+        if quote:
+            if c == "\\" and quote == '"':
+                k += 1
+            elif c == quote:
+                if quote == "'" and k + 1 < len(text) and text[k + 1] == "'":
+                    k += 1
+                else:
+                    quote = None
+        elif c in "\"'":
+            quote = c
+        elif text.startswith("${{", k):
+            end = _ci_expression_end(text, k, len(text))
+            if end is not None:
+                k = end
+                continue
+        elif c in "{[":
+            stack.append(c)
+        elif c in "}]":
+            if stack:
+                stack.pop()
+            if not stack:
+                return k + 1
+        k += 1
+    return len(text)
+
+
+def _yaml_flow_start(value):
+    """Locate a flow collection after YAML node properties; properties remain exact."""
+    k = 0
+    while True:
+        while k < len(value) and value[k].isspace():
+            k += 1
+        if k >= len(value):
+            return None
+        if value[k] == "&":
+            k += 1
+            while k < len(value) and not value[k].isspace() and value[k] not in "[]{},":
+                k += 1
+            continue
+        if value.startswith("!<", k):
+            end = value.find(">", k + 2)
+            if end < 0:
+                return None
+            k = end + 1
+            continue
+        if value[k] == "!":
+            k += 1
+            while k < len(value) and not value[k].isspace() and value[k] not in "[]{},":
+                k += 1
+            continue
+        return k if value[k] in "[{" else None
+
+
+def _ci_mask(text, mask, github=False):
     lines = text.split("\n")
     starts, at = [], 0
     for line in lines:
@@ -1021,6 +1262,45 @@ def _ci_mask(text, mask):
             mask[starts[i] + m.end():starts[i] + len(lines[i])] = bytes([2]) * (len(lines[i]) - m.end())
             i += 1
             continue
+        parent = _ci_parent(lines, i, len(m.group(1))) if m else ""
+        ancestors = _ci_ancestors(lines, i, len(m.group(1))) if m else []
+        in_with = "with" in ancestors
+        in_concurrency = "concurrency" in ancestors
+        if github and (in_with or key == "group" and in_concurrency or key == "concurrency"):
+            value = lines[i][m.end():]
+            exact = in_with and _ci_fetch_input(key, value)
+            if value.strip() and not value.lstrip().startswith("#"):
+                if YAML_BLOCK_START.match(value):
+                    j = _ci_value(text, lines, starts, i, m.end(), len(m.group(1)), mask, False)
+                    a = starts[i + 1] if i + 1 < len(lines) else len(text)
+                    b = starts[j - 1] + len(lines[j - 1])
+                    _ci_mark_text(text, a, b, mask, exact)
+                    i = j
+                    continue
+                a, b = starts[i] + m.end(), starts[i] + len(lines[i])
+                _ci_mark_text(text, a, b, mask, exact)
+            i += 1
+            continue
+        if github and not command and key in CI_TEXT_KEYS:
+            value = lines[i][m.end():]
+            if value.strip() and not value.lstrip().startswith("#"):
+                j = _ci_value(text, lines, starts, i, m.end(), len(m.group(1)), mask, False)
+                a = starts[i + 1] if YAML_BLOCK_START.match(value) and i + 1 < len(lines) else starts[i] + m.end()
+                b = starts[j - 1] + len(lines[j - 1])
+                _ci_mark_text(text, a, b, mask, False)
+                i = j
+                continue
+            i += 1
+            continue
+        if key in CI_ENV_KEYS or github and key in ("with", "concurrency"):
+            value = lines[i][m.end():]
+            flow = _yaml_flow_start(value)
+            if flow is not None:
+                a = starts[i] + m.end() + flow
+                b = _ci_flow_end(text, a)
+                _ci_flow_values(text, a, b, mask, github and key == "with")
+                i += text[a:b].count("\n") + 1
+                continue
         if not command and key not in CI_TEXT_KEYS:
             i += 1
             continue
@@ -1076,9 +1356,36 @@ def _compose_mask(text, mask):
                         mask[starts[j]:starts[j] + len(lines[j])] = bytes([1]) * len(lines[j])
                     j += 1
             continue
-        if not m or m.group(2).lower() not in ("environment", "labels") or line[m.end():].split("#", 1)[0].strip():
+        if not m or m.group(2).lower() not in ("environment", "labels"):
             continue
         labels = m.group(2).lower() == "labels"
+        value = line[m.end():].split("#", 1)[0]
+        flow = _yaml_flow_start(value)
+        if flow is not None:
+            a = starts[i] + m.end() + flow
+            b = _ci_flow_end(text, a)
+            if text[a] == "{":
+                _ci_flow_values(text, a, b, mask, False)
+            else:
+                # Compose consumes the name before '='; only the assigned value is text.
+                items, k = text[a + 1:b - 1], 0
+                while k < len(items):
+                    while k < len(items) and (items[k].isspace() or items[k] == ","):
+                        k += 1
+                    if k >= len(items):
+                        break
+                    offset = 1 if items[k] in "\"'" else 0
+                    end = _yaml_quoted_end(items, k, len(items)) if offset else items.find(",", k)
+                    end = len(items) if end < 0 else end
+                    equal = items.find("=", k + offset, end)
+                    if equal >= 0:
+                        start = a + 1 + equal + 1
+                        stop = a + 1 + end
+                        mask[start:stop] = bytes([1]) * (stop - start)
+                    k = min(end + offset, len(items))
+            continue
+        if value.strip():
+            continue
         col = len(m.group(1))
         if not labels:
             _ci_env(text, lines, starts, i + 1, col, mask)
@@ -1086,11 +1393,15 @@ def _compose_mask(text, mask):
         while j < len(lines) and (not lines[j].strip() or len(lines[j]) - len(lines[j].lstrip(" \t")) > col):
             item = re.match(r"[ \t]*-[ \t]+[\"']?[^=\"'\s]+=", lines[j])
             if item:
-                a = len(lines[j]) - len(lines[j].lstrip(" \t-")) if labels else item.end()
+                a = item.end()
                 mask[starts[j] + a:starts[j] + len(lines[j])] = bytes([1]) * (len(lines[j]) - a)
-            elif labels and CI_KEY.match(lines[j]):
-                a = len(lines[j]) - len(lines[j].lstrip(" \t"))
-                mask[starts[j] + a:starts[j] + len(lines[j])] = bytes([1]) * (len(lines[j]) - a)
+            elif labels:
+                # Compose label keys may contain dots. Only the mapping value is display text;
+                # the key is still an exact name consumed by Compose and other tools.
+                mapping = re.match(r'''[ \t]*(?:"[^"\n]+"|'[^'\n]+'|[^:#\n]+?)[ \t]*:[ \t]*''', lines[j])
+                if mapping:
+                    a = mapping.end()
+                    mask[starts[j] + a:starts[j] + len(lines[j])] = bytes([1]) * (len(lines[j]) - a)
             j += 1
 
 
@@ -1203,7 +1514,8 @@ def _json_mask(text, mask):
 # pom.xml elements that describe the project or its people; coordinates, versions and the
 # URLs a build fetches from stay exact. A direct project URL is descriptive, while a URL nested
 # in repositories, dependencies or plugins is resolved by the build.
-POM_TEXT = re.compile(r"<(name|description|organization|email|roles?|timezone|comments|inceptionYear)>(.*?)</\1>", re.S)
+POM_TEXT = re.compile(r"<((?:[^\s<>/:]+:)?)(name|description|organization|email|roles?|timezone|comments|inceptionYear)\b[^>]*>"
+                      r"(.*?)</\1\2[ \t\r\n]*>", re.S)
 POM_URL = re.compile(r"<url>(.*?)</url>", re.S)
 POM_EXACT_URL_PARENTS = ("repositories", "pluginRepositories", "distributionManagement", "dependencies", "plugins")
 
@@ -1213,6 +1525,27 @@ def _pom_url_is_text(text, at):
     before = text[:at].lower()
     return not any(before.rfind("<" + tag.lower()) > before.rfind("</" + tag.lower())
                    for tag in POM_EXACT_URL_PARENTS)
+
+
+def _xml_ncname(name):
+    """Whether name follows the XML 1.0 fifth-edition Name classes, excluding colon."""
+    if not name:
+        return False
+
+    def start(c):
+        cp = ord(c)
+        return c == "_" or "A" <= c <= "Z" or "a" <= c <= "z" \
+            or 0xC0 <= cp <= 0xD6 or 0xD8 <= cp <= 0xF6 or 0xF8 <= cp <= 0x2FF \
+            or 0x370 <= cp <= 0x37D or 0x37F <= cp <= 0x1FFF or 0x200C <= cp <= 0x200D \
+            or 0x2070 <= cp <= 0x218F or 0x2C00 <= cp <= 0x2FEF or 0x3001 <= cp <= 0xD7FF \
+            or 0xF900 <= cp <= 0xFDCF or 0xFDF0 <= cp <= 0xFFFD or 0x10000 <= cp <= 0xEFFFF
+
+    def rest(c):
+        cp = ord(c)
+        return start(c) or c in "-." or "0" <= c <= "9" or cp == 0xB7 \
+            or 0x300 <= cp <= 0x36F or 0x203F <= cp <= 0x2040
+
+    return start(name[0]) and all(rest(c) for c in name[1:])
 # setup.cfg [metadata] keys that are text; requirement keys elsewhere stay exact.
 CFG_TEXT_KEYS = {"description", "long_description", "summary", "author", "maintainer", "keywords", "author_email",
                  "maintainer_email", "license", "url", "home_page", "download_url", "project_urls"}
@@ -1245,12 +1578,14 @@ def manifest_mask(text, name):
     elif base in ("pyproject.toml", "cargo.toml", "pipfile"):
         _toml_mask(text, mask)
     elif is_ci_yaml(name):
-        _ci_mask(text, mask)
+        _ci_mask(text, mask, "/.github/" in ("/" + name.replace(os.sep, "/").lower()))
     elif "compose" in base and base.endswith((".yml", ".yaml")):
         _compose_mask(text, mask)
     elif base == "pom.xml":
         for m in POM_TEXT.finditer(text):
-            mask[m.start(2):m.end(2)] = bytes([1]) * (m.end(2) - m.start(2))
+            prefix = m.group(1)[:-1] if m.group(1) else ""
+            if not prefix or _xml_ncname(prefix):
+                mask[m.start(3):m.end(3)] = bytes([1]) * (m.end(3) - m.start(3))
         for m in POM_URL.finditer(text):
             if _pom_url_is_text(text, m.start()):
                 mask[m.start(1):m.end(1)] = bytes([1]) * (m.end(1) - m.start(1))
@@ -1348,8 +1683,14 @@ CODE_BLOCKS = {".php": (("<?php", "?>"), ("<?=", "?>")), ".erb": (("<%", "%>"),)
 _HBS_COMMENT = re.compile(r"\{\{!--.*?--\}\}|\{\{!.*?\}\}", re.S)
 _ASP_COMMENT = re.compile(r"<%--.*?--%>", re.S)
 _EEX_COMMENT = re.compile(r"<%!--.*?--%>", re.S)
+_HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
+_JINJA_COMMENT = re.compile(r"\{#-?.*?-?#\}", re.S)
+_LIQUID_COMMENT = re.compile(r"\{%-?[ \t]*comment[ \t]*-?%\}.*?\{%-?[ \t]*endcomment[ \t]*-?%\}", re.S)
+_RAZOR_COMMENT = re.compile(r"@\*.*?\*@", re.S)
 TEMPLATE_COMMENTS = {".hbs": _HBS_COMMENT, ".mustache": _HBS_COMMENT, ".jsp": _ASP_COMMENT, ".aspx": _ASP_COMMENT,
                      ".ascx": _ASP_COMMENT, ".heex": _EEX_COMMENT, ".eex": _EEX_COMMENT, ".leex": _EEX_COMMENT,
+                     ".jinja": _JINJA_COMMENT, ".j2": _JINJA_COMMENT, ".twig": _JINJA_COMMENT, ".njk": _JINJA_COMMENT,
+                     ".liquid": _LIQUID_COMMENT, ".razor": _RAZOR_COMMENT, ".cshtml": _RAZOR_COMMENT,
                      ".mako": re.compile(r"<%doc>.*?</%doc>|^[ \t]*##[^\n]*", re.S | re.M),
                      ".tpl": re.compile(r"\{\*.*?\*\}", re.S)}
 
@@ -1524,8 +1865,14 @@ def template_mask(text, ext):
                 k += 1
         return mask
     mask = bytearray(b"\x01" * n)
+    comments = list(_HTML_COMMENT.finditer(text))
+    template_comments = TEMPLATE_COMMENTS.get(ext)
+    if template_comments:
+        comments.extend(template_comments.finditer(text))
     # A script or style block runs in the browser whatever template language serves the page.
     for m in SCRIPT_BLOCK.finditer(text):
+        if any(comment.start() <= m.start() < comment.end() for comment in comments):
+            continue
         end = re.compile(r"</" + m.group(1) + r"[ \t\n]*>", re.I).search(text, m.end())
         close = end.start() if end else -1
         close = n if close < 0 else close
@@ -1571,10 +1918,9 @@ def template_mask(text, ext):
     if ext in (".qmd", ".rmd"):
         for m in re.finditer(r"(?ms)^```[^\n]*\n.*?^```[ \t]*$", text):
             mask[m.start():m.end()] = bytes(m.end() - m.start())
-    comments = TEMPLATE_COMMENTS.get(ext)
-    if comments:
+    if template_comments:
         # A template comment is read as prose, not as template code.
-        for m in comments.finditer(text):
+        for m in template_comments.finditer(text):
             mask[m.start():m.end()] = b"\x01" * (m.end() - m.start())
     return mask
 HEREDOC_RE = re.compile(r"<<<?[-~]?[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]{0,40})\1")
@@ -2478,9 +2824,11 @@ def _scan_chars(line, i, what, markup, out, exact=False, spans=None, known=True,
                 why = ("is read by Python as %r" if py_names else "looks like %r but is another name") % folded
         # A host name is resolved, never read as text: a lookalike in one blocks wherever it is
         # (a curl argument, a string, a comment), unless the host is written in that script.
-        # In code proper (not a shell argument) a dotted name is a member (x.item(), h.le), and
-        # "@" an operator (W@x): only a word after :// is a host there.
-        host = _host_at(line, m.start(), m.end(), not code_pos or code_ext in SHELL_TEXT_EXT) \
+        # In code proper a dotted name is usually a member. Keep compact or spaced matrix
+        # multiplication out, but recognize the security-sensitive user@host shape.
+        code_host = code_pos and code_ext not in SHELL_TEXT_EXT
+        host = _host_at(line, m.start(), m.end(), not code_host,
+                        not code_host or _code_email_at(line, m.start())) \
             if any(c in LOOKALIKE for c in m.group(0)) else None
         host_why = None
         if host:
@@ -3059,14 +3407,46 @@ def scan(text, name="<stdin>", marker=True, fragment=False, only_lines=None, cap
     byte_text = text
     if ext in (".sh", ".bash", ".zsh", ".ksh", ".fish"):
         byte_text = text.replace("\\\\", "\\")    # the shell halves backslashes before printf %b or echo -e
-    runs = list((BYTE_ESCAPES_ADJACENT if ext in c_family | {".go", ".py", ".pyi"} else BYTE_ESCAPES).finditer(byte_text))
-    if ext in (".py", ".pyi"):
-        # Python joins the elements of a list only in b"".join([...]); elsewhere a comma separates values.
-        joined = [m for m in BYTE_ESCAPES.finditer(byte_text)
-                  if re.search(r"\.join\([ \t\r\n]*[\[(][^\])]*$", byte_text[max(0, m.start() - 500):m.start()])]
-        runs = joined + [m for m in runs if not any(j.start() <= m.start() < j.end() for j in joined)]
-    for m in runs:
-        raw = m.group(0)
+    runs = list(BYTE_ESCAPES_SAME_LITERAL.finditer(byte_text))
+    extra_runs = []
+    broad = list(BYTE_ESCAPES.finditer(byte_text))
+    if ext in c_family:
+        runs += [m for m in BYTE_ESCAPES_ADJACENT.finditer(byte_text)
+                 if not re.search(r",|\.\.|<<", m.group(0))]
+        # A constructor may wrap the first literal, so the collection-free matcher cannot span
+        # it. In C and C++, + joins these values; commas still describe separate collection items.
+        runs += [m for m in broad if "+" in m.group(0) and "," not in m.group(0)]
+    elif ext in (".py", ".pyi"):
+        runs += list(BYTE_ESCAPES_ADJACENT.finditer(byte_text))
+        # A comma joins bytes only inside the explicit join operation.
+        runs += [m for m in broad
+                 if re.search(r"\.join\([ \t\r\n]*[\[(][^\])]*$", byte_text[max(0, m.start() - 500):m.start()])]
+    elif ext in (".sh", ".bash", ".zsh", ".ksh", ".fish"):
+        runs += list(BYTE_ESCAPES_ADJACENT.finditer(byte_text))
+    elif ext == ".rb":
+        runs += [m for m in BYTE_ESCAPES_ADJACENT.finditer(byte_text)
+                 if "+" in m.group(0) or "<<" in m.group(0)]
+    elif ext in (".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".go"):
+        runs += [m for m in BYTE_ESCAPES_ADJACENT.finditer(byte_text) if "+" in m.group(0)]
+        runs += [m for m in broad if re.search(r"Buffer\.concat\([ \t\r\n]*\[[^\]]*$",
+                                                byte_text[max(0, m.start() - 500):m.start()])
+                 or re.search(r"\[[^\[\]]*$", byte_text[max(0, m.start() - 500):m.start()])
+                 and re.match(r'''["'][ \t\r\n]*\][ \t\r\n]*\.join\([ \t\r\n]*(["'])\1''', byte_text[m.end():])]
+        if ext != ".go":
+            # Buffer elements are often wrapped in Buffer.from(), so the generic literal-gap
+            # matcher cannot span them. Buffer.concat is the operation that joins those bytes.
+            for call in re.finditer(r"Buffer\.concat\(([^;\n]{0,2000})\)", byte_text):
+                if len(re.findall(BYTE_ESCAPE_ONE, call.group(1))) >= 3:
+                    extra_runs.append((call.start(1), call.group(1)))
+    elif ext == ".rs":
+        runs += [m for m in broad if re.search(r"concat!\([^)]*$", byte_text[max(0, m.start() - 500):m.start()])]
+    candidates = list({(m.start(), m.end()): (m.start(), m.group(0)) for m in runs}.values()) + extra_runs
+    run_values = []
+    for candidate in sorted(candidates, key=lambda item: (item[0], -len(item[1]))):
+        if not any(candidate[0] < start + len(raw) and start < candidate[0] + len(candidate[1])
+                   for start, raw in run_values):
+            run_values.append(candidate)
+    for start, raw in run_values:
         parts = re.findall(BYTE_ESCAPE_ONE, raw)
         data = bytes(int(p[2:], 16) if p[1] in "xX" else int(p[1:], 8) for p in parts)
         decoded = data.decode("utf-8", "ignore")
@@ -3079,8 +3459,8 @@ def scan(text, name="<stdin>", marker=True, fragment=False, only_lines=None, cap
         # Random bytes (a gzip or PNG fixture) spell such a character now and then; text written
         # to hide decodes cleanly, or holds them in a run (a tag sequence).
         if hidden and (clean or _hidden_run(decoded) or any(0xE0000 <= ord(c) <= 0xE007F for c in hidden)):
-            row = _row_of(byte_text, m.start())
-            out.append(Finding(SOFT if prose else HARD, row + 1, m.start() - byte_text.rfind("\n", 0, m.start()), "hidden-escape",
+            row = _row_of(byte_text, start)
+            out.append(Finding(SOFT if prose else HARD, row + 1, start - byte_text.rfind("\n", 0, start), "hidden-escape",
                                "%r spells U+%04X, an invisible character, in UTF-8 bytes" % (raw[:40], ord(hidden[0]))))
     # Percent-encoding (decodeURIComponent, unquote) of hidden characters.
     if what != "prose":
@@ -4041,6 +4421,112 @@ def self_test():
         ("js-new-regex-text-ok", "new /a\u00a0b/\n", "x.js", 0, 1),
         ("workflow-run-argument-lookalike-warns", "steps:\n  - run: echo \u0441\u0430\u0440\u043e\n", ".github/workflows/ci.yml", 0, 1),
         ("workflow-run-command-lookalike-blocks", "steps:\n  - run: \u0441\u0430\u0440\u043e x\n", ".github/workflows/ci.yml", 1, 0),
+        ("github-run-expression-exact", "steps:\n  - run: echo ${{ adm" + chr(0x131) + "n.ref }}\n",
+         ".github/workflows/ci.yml", 1, 0),
+        ("github-run-block-expression-exact", "steps:\n  - run: |\n      echo ${{ adm" + chr(0x131) + "n.ref }}\n",
+         ".github/workflows/ci.yml", 1, 0),
+        ("github-run-plain-argument-text", "steps:\n  - run: echo I" + chr(0x15F) + chr(0x131) + "l\n",
+         ".github/workflows/ci.yml", 0, 1),
+        ("github-env-expression-exact", "env:\n  LABEL: ${{ adm" + chr(0x131) + "n.ref }}\n",
+         ".github/workflows/ci.yml", 1, 0),
+        ("github-env-plain-value-text", "env:\n  LABEL: I" + chr(0x15F) + chr(0x131) + "l\n",
+         ".github/workflows/ci.yml", 0, 1),
+        ("github-env-flow-values-text", "env: {BARE: I" + chr(0x15F) + chr(0x131) + "l, SINGLE: 'S"
+         + chr(0x131) + "la', DOUBLE: \"I" + chr(0x11F) + "d" + chr(0x131) + "r\"}\n",
+         ".github/workflows/ci.yml", 0, 3),
+        ("github-env-flow-expression-exact", "env: {LABEL: ${{ adm" + chr(0x131) + "n.ref }}}\n",
+         ".github/workflows/ci.yml", 1, 0),
+        ("github-env-flow-key-exact", "env: {LAB" + chr(0x131) + "L: safe}\n",
+         ".github/workflows/ci.yml", 1, 0),
+        ("github-env-flow-multiline-text", "env: {\n  LABEL: I" + chr(0x15F) + chr(0x131)
+         + "l,\n  OTHER: safe\n}\n", ".github/workflows/ci.yml", 0, 1),
+        ("github-env-flow-anchor-text", "env: &defaults {GREETING: I" + chr(0x15F) + chr(0x131) + "l}\n",
+         ".github/workflows/ci.yml", 0, 1),
+        ("gitlab-env-flow-tag-text", "variables: !tag {GREETING: I" + chr(0x15F) + chr(0x131) + "l}\n",
+         ".gitlab-ci.yml", 0, 1),
+        ("azure-env-flow-tag-anchor-text", "variables: !!str &defaults {GREETING: I" + chr(0x15F)
+         + chr(0x131) + "l}\n", "azure-pipelines.yml", 0, 1),
+        ("github-env-alias-exact", "env: *defaults\n", ".github/workflows/ci.yml", 0, 0),
+        ("github-env-flow-anchor-exact", "env: &defau" + chr(0x131) + "ts {GREETING: safe}\n",
+         ".github/workflows/ci.yml", 1, 0),
+        ("gitlab-env-flow-tag-exact", "variables: !ta" + chr(0x131) + "g {GREETING: safe}\n",
+         ".gitlab-ci.yml", 1, 0),
+        ("github-with-input-expression-exact", "steps:\n  - with:\n      label: ${{ adm" + chr(0x131) + "n.ref }}\n",
+         ".github/workflows/ci.yml", 1, 0),
+        ("github-with-title-turkish-ok", "steps:\n  - uses: x/y@v1\n    with:\n      title: \"I" + chr(0x15F) + chr(0x131) + "l\"\n",
+         ".github/workflows/ci.yml", 0, 1),
+        ("github-concurrency-group-turkish-ok", "concurrency:\n  group: \"I" + chr(0x15F) + chr(0x131) + "l\"\n",
+         ".github/workflows/ci.yml", 0, 1),
+        ("github-with-repository-exact", "steps:\n  - uses: x/y@v1\n    with:\n      repository: adm" + chr(0x131) + "n/repo\n",
+         ".github/workflows/ci.yml", 1, 0),
+        ("github-with-input-key-exact", "steps:\n  - uses: x/y@v1\n    with:\n      t" + chr(0x131) + "tle: safe\n",
+         ".github/workflows/ci.yml", 1, 0),
+        ("github-concurrency-expression-exact", "concurrency:\n  group: ${{ adm" + chr(0x131) + "n.ref }}\n",
+         ".github/workflows/ci.yml", 1, 0),
+        ("github-with-block-expression-exact", "steps:\n  - with:\n      message: |\n        ${{ env.adm" + chr(0x131)
+         + "n }}\n", ".github/workflows/ci.yml", 1, 0),
+        ("github-with-block-message-text", "steps:\n  - with:\n      message: |\n        I" + chr(0x15F) + chr(0x131)
+         + "l\n", ".github/workflows/ci.yml", 0, 1),
+        ("github-with-flow-message-ok", "steps:\n  - with: {message: \"I" + chr(0x15F) + chr(0x131) + "l\"}\n",
+         ".github/workflows/ci.yml", 0, 1),
+        ("github-with-double-quoted-key-ok", "steps:\n  - with: {\"message\": \"I" + chr(0x15F) + chr(0x131) + "l\"}\n",
+         ".github/workflows/ci.yml", 0, 1),
+        ("github-with-double-quoted-key-exact", "steps:\n  - with: {\"url\": \"adm" + chr(0x131) + "n.dev\"}\n",
+         ".github/workflows/ci.yml", 1, 0),
+        ("github-with-single-quote-escape-ok", "steps:\n  - with: {message: 'I" + chr(0x15F) + chr(0x131)
+         + "l''dan'}\n", ".github/workflows/ci.yml", 0, 1),
+        ("github-with-single-quoted-key-ok", "steps:\n  - with: {'message': 'I" + chr(0x15F) + chr(0x131) + "l'}\n",
+         ".github/workflows/ci.yml", 0, 1),
+        ("github-with-flow-url-exact", "steps:\n  - with: {url: \"adm" + chr(0x131) + "n.dev\"}\n",
+         ".github/workflows/ci.yml", 1, 0),
+        ("github-with-flow-sequence-text", "steps:\n  - with: {message: [I" + chr(0x15F) + chr(0x131) + "l]}\n",
+         ".github/workflows/ci.yml", 0, 1),
+        ("github-with-flow-sequence-exact", "steps:\n  - with: {url: [adm" + chr(0x131) + "n.dev]}\n",
+         ".github/workflows/ci.yml", 1, 0),
+        ("github-concurrency-flow-sequence-text", "concurrency: [I" + chr(0x15F) + chr(0x131) + "l]\n",
+         ".github/workflows/ci.yml", 0, 1),
+        ("github-concurrency-flow-sequence-expression", "concurrency: [${{ env.adm" + chr(0x131) + "n }}]\n",
+         ".github/workflows/ci.yml", 1, 0),
+        ("github-concurrency-quoted-brace-expression", "concurrency: [${{ format('}}', env.adm" + chr(0x131)
+         + "n) }}]\n", ".github/workflows/ci.yml", 1, 0),
+        ("github-concurrency-quoted-brace-text", "concurrency: [${{ format('}}', env.name) }}, I" + chr(0x15F)
+         + chr(0x131) + "l]\n", ".github/workflows/ci.yml", 0, 1),
+        ("github-name-block-expression", "name: |\n  Deploy ${{ format('}} {0}', adm" + chr(0x131) + "n.ref) }}\n",
+         ".github/workflows/ci.yml", 1, 0),
+        ("github-name-block-text", "name: |\n  I" + chr(0x15F) + chr(0x131) + "l\n",
+         ".github/workflows/ci.yml", 0, 1),
+        ("github-concurrency-block-expression", "concurrency: |\n  ${{ adm" + chr(0x131) + "n.ref }}\n",
+         ".github/workflows/ci.yml", 1, 0),
+        ("github-concurrency-block-text", "concurrency: |\n  I" + chr(0x15F) + chr(0x131) + "l\n",
+         ".github/workflows/ci.yml", 0, 1),
+        ("github-with-block-message-ok", "steps:\n  - with:\n      message: |2-\n        I" + chr(0x15F) + chr(0x131) + "l\n",
+         ".github/workflows/ci.yml", 0, 1),
+        ("github-with-nested-message-ok", "steps:\n  - with:\n      options:\n        message: I" + chr(0x15F) + chr(0x131) + "l\n",
+         ".github/workflows/ci.yml", 0, 1),
+        ("github-concurrency-flow-group-ok", "concurrency: {group: \"I" + chr(0x15F) + chr(0x131) + "l\"}\n",
+         ".github/workflows/ci.yml", 0, 1),
+        ("github-concurrency-multiline-flow-ok", "concurrency: {\n  group: \"I" + chr(0x15F) + chr(0x131) + "l\",\n  cancel: true}\n",
+         ".github/workflows/ci.yml", 0, 1),
+        ("github-with-multiline-flow-expression", "steps:\n  - with: {\n      message: \"I" + chr(0x15F) + chr(0x131)
+         + "l ${{ adm" + chr(0x131) + "n.ref }}\"}\n", ".github/workflows/ci.yml", 1, 1),
+        ("github-concurrency-block-group-ok", "concurrency:\n  settings:\n    group: >-\n      I" + chr(0x15F) + chr(0x131) + "l\n",
+         ".github/workflows/ci.yml", 0, 1),
+        ("github-with-api-url-exact", "steps:\n  - with:\n      api-url: adm" + chr(0x131) + "n.dev\n",
+         ".github/workflows/ci.yml", 1, 0),
+        ("github-with-api-uri-exact", "steps:\n  - with:\n      api_uri: adm" + chr(0x131) + "n\n",
+         ".github/workflows/ci.yml", 1, 0),
+        ("github-with-api-endpoint-exact", "steps:\n  - with:\n      api_endpoint: adm" + chr(0x131) + "n\n",
+         ".github/workflows/ci.yml", 1, 0),
+        ("github-with-api-server-exact", "steps:\n  - with:\n      api_server: adm" + chr(0x131) + "n\n",
+         ".github/workflows/ci.yml", 1, 0),
+        ("github-with-api-registry-exact", "steps:\n  - with:\n      api_registry: adm" + chr(0x131) + "n\n",
+         ".github/workflows/ci.yml", 1, 0),
+        ("github-with-api-label-text", "steps:\n  - with:\n      api_label: I" + chr(0x15F) + chr(0x131) + "l\n",
+         ".github/workflows/ci.yml", 0, 1),
+        ("github-with-host-shape-exact", "steps:\n  - with:\n      target: adm" + chr(0x131) + "n.dev\n",
+         ".github/workflows/ci.yml", 1, 0),
+        ("github-with-title-hostlike-exact", "steps:\n  - with:\n      title: adm" + chr(0x131) + "n.dev\n",
+         ".github/workflows/ci.yml", 1, 0),
         ("composite-action-uses-lookalike", "runs:\n  using: composite\n  steps:\n    - uses: actions/ch\u0435ckout@v4\n", ".github/actions/x/action.yml", 1, 0),
         ("actions-folder-other-file-uses-lookalike", "steps:\n    - uses: actions/ch\u0435ckout@v4\n", ".github/actions/x/other.yml", 1, 0),
         ("pnpm-lock-mixed-name", "packages:\n  /re\u0430ct@1.0.0:\n    resolution: {}\n", "pnpm-lock.yaml", 1, 0),
@@ -4065,6 +4551,21 @@ def self_test():
         ("host-lookalike-string", "urlopen('https://\u0430\u0440\u0440\u04cf\u0435.com/x')\n", "x.py", 1, 0),
         ("host-lookalike-user-at", "git clone git@\u0430\u0440\u0440\u04cf\u0435.com:x/y.git\n", "x.sh", 1, 0),
         ("host-lookalike-dotted", "x = '\u0430\u0440\u0440\u04cf\u0435.com'  # \u0441\u043a\u0430\u0447\u0430\u0442\u044c\n", "x.py", 1, 0),
+        ("host-less-common-tlds", "p\u0430ypal.one p\u0430ypal.academy p\u0430ypal.solutions p\u0430ypal.photography p\u0430ypal.international\n",
+         "x.txt", 5, 0),
+        ("host-method-chain-ok", "Use \u03c3x.solutions() here.\n", "x.txt", 0, 1),
+        ("host-uncommon-file-ok", "See p\u0430ypal.png in the assets folder.\n", "x.txt", 0, 1),
+        ("python-user-at-host", "target = user@p\u0430ypal.com\n", "x.py", 1, 0),
+        ("python-user-at-lookalike-host", "target = user@" + chr(0x441) + chr(0x43e) + chr(0x440)
+         + chr(0x443) + ".com\n", "x.py", 1, 0),
+        ("python-user-at-short-host", "target = user@\u0430.com\n", "x.py", 1, 0),
+        ("host-one-letter-tld-ok", "See p\u0430ypal.x in this example.\n", "x.txt", 0, 1),
+        ("email-file-suffix-host", "Send to user@p\u0430ypal.docx now.\n", "x.txt", 1, 0),
+        ("email-one-char-local-host", "Send to a@p" + chr(0x430) + "ypal.py now.\n", "x.txt", 1, 0),
+        ("email-one-char-nonascii-first-host", "Send to a@" + chr(0x430) + "pple.py now.\n", "x.txt", 1, 0),
+        ("email-two-char-local-host", "Send to ab@p" + chr(0x430) + "ypal.py now.\n", "x.txt", 1, 0),
+        ("python-matmul-at-ok", "target = W@\u03b1x.com\n", "x.py", 0, 1),
+        ("python-matmul-forms-not-hosts", "C = A @ B\ny = W@x\n", "x.py", 0, 0),
         ("host-lookalike-native-tld", "curl https://\u0430\u0440\u0440\u04cf\u0435.\u0440\u0444/\n", "x.sh", 1, 0),
         ("host-native-domain-ok", "curl https://\u0435\u0435.\u043f\u0440\u0438\u043c\u0435\u0440.\u0440\u0444/\n", "x.sh", 0, 0),
         ("shell-lookalike-word-ok", "echo \u0430\u0440\u0440\u04cf\u0435\n", "x.sh", 0, 1),
@@ -4138,6 +4639,18 @@ def self_test():
         ("turkish-dotless-require", "s = 'kay\u0131t';\nrequ\u0131re('x');\n", "x.js", 1, 1),
         ("php-script-block-code", "<p>hi</p>\n<script> const \u0441\u0435\u0440\u043e = 1; fetch(\u201cx\u201d) </script>\n", "x.php", 3, 0),
         ("liquid-script-block-code", "<p>hi</p>\n<script> const \u0441\u0435\u0440\u043e = 1; </script>\n", "x.liquid", 1, 0),
+        ("vue-comment-script-text", "<!-- Example: <script> -->\n<p>Hello\u00a0world</p>\n", "x.vue", 0, 1),
+        ("hbs-comment-script-text", "{{! Example: <script> }}\n<p>Hello\u00a0world</p>\n", "x.hbs", 0, 1),
+        ("liquid-comment-script-text", "{% comment %}<script>{% endcomment %}\n<p>Hello\u00a0world</p>\n", "x.liquid", 0, 1),
+        ("jinja-comment-script-text", "{# Example: <script> #}\n<p>Hello" + chr(0xA0) + "world</p>\n", "x.jinja", 0, 1),
+        ("twig-dash-comment-script-text", "{#- Example: <script> -#}\n<p>Hello" + chr(0xA0) + "world</p>\n", "x.twig", 0, 1),
+        ("liquid-dash-comment-script-text", "{%- comment -%}<script>{%- endcomment -%}\n<p>Hello" + chr(0xA0) + "world</p>\n",
+         "x.liquid", 0, 1),
+        ("jinja-real-script-still-code", "{# example #}\n<script>let a" + chr(0xA0) + "= 1;</script>\n", "x.jinja", 1, 0),
+        ("razor-comment-script-text", "@* Example: <script> *@\n<p>Hello\u00a0world</p>\n", "x.cshtml", 0, 1),
+        ("jsp-comment-script-text", "<%-- Example: <script> --%>\n<p>Hello\u00a0world</p>\n", "x.jsp", 0, 1),
+        ("php-html-comment-script", "<!-- Example: <script> -->\n<p>Hello\u00a0world</p>\n", "x.php", 0, 1),
+        ("liquid-script-code-still", "{% comment %}example{% endcomment %}\n<script>let a\u00a0= 1;</script>\n", "x.liquid", 1, 0),
         ("php-page-text-russian-ok", "<p>\u0441\u0435\u0440\u043e \u0434\u043e\u043c</p>\n<script>let a = 1;</script>\n", "x.php", 0, 0),
         ("html-script-block-data-ok", "<p>hi</p>\n<script> const \u0441\u0435\u0440\u043e = 1; </script>\n", "x.html", 0, 0),
         ("greek-member-access-ok", "def f(x):\n    return x / \u03c3x.item()\n", "x.py", 0, 1),
@@ -4157,6 +4670,25 @@ def self_test():
         ("python-double-struck-digit", "x\U0001d7d9 = 1\n", "x.py", 2, 0),
         ("pom-organization-turkish-ok", "<project>\n  <organization><name>I\u015f\u0131k Yaz\u0131l\u0131m</name></organization>\n"
          "  <description>\n    I\u015f\u0131k i\u00e7in\n  </description>\n</project>\n", "pom.xml", 0, 3),
+        ("pom-prefixed-name-attrs-ok", "<project><m:name xml:lang=\"tr\">I\u015f\u0131k Yaz\u0131l\u0131m</m:name></project>\n",
+         "pom.xml", 0, 2),
+        ("pom-ncname-prefix-ok", "<my-ns.part:name>I" + chr(0x15F) + chr(0x131) + "k</my-ns.part:name>\n", "pom.xml", 0, 1),
+        ("pom-unicode-ncname-prefix-ok", "<pr" + chr(0xE9) + "fix:name>I" + chr(0x15F) + chr(0x131)
+         + "k</pr" + chr(0xE9) + "fix:name>\n", "pom.xml", 0, 1),
+        ("pom-unicode-ncname-prefix-exact", "<pr" + chr(0x131) + "fix:name>safe</pr" + chr(0x131)
+         + "fix:name>\n", "pom.xml", 2, 0),
+        ("pom-ncname-letterlike-start", "<" + chr(0x2118) + "ns:name>I" + chr(0x15F) + chr(0x131)
+         + "k</" + chr(0x2118) + "ns:name>\n", "pom.xml", 0, 1),
+        ("pom-ncname-ideographic-start", "<" + chr(0x3001) + "ns:name>I" + chr(0x15F) + chr(0x131)
+         + "k</" + chr(0x3001) + "ns:name>\n", "pom.xml", 0, 1),
+        ("pom-ncname-enclosing-mark-ok", "<p" + chr(0x20DD) + ":name>I" + chr(0x15F) + chr(0x131) + "k</p"
+         + chr(0x20DD) + ":name>\n", "pom.xml", 0, 1),
+        ("pom-ncname-outside-range", "<p" + chr(0x2190) + ":name>adm" + chr(0x131) + "n</p"
+         + chr(0x2190) + ":name>\n", "pom.xml", 1, 2),
+        ("pom-ncname-ascii-start-ok", "<p:name>I" + chr(0x15F) + chr(0x131) + "k</p:name>\n",
+         "pom.xml", 0, 1),
+        ("pom-invalid-ncname-prefix-exact", "<1ns:name>adm" + chr(0x131) + "n</1ns:name>\n", "pom.xml", 1, 0),
+        ("pom-prefixed-artifact-exact", "<project><m:artifactId>r\u0435quests</m:artifactId></project>\n", "pom.xml", 1, 0),
         ("pom-artifact-lookalike", "<project>\n  <artifactId>r\u0435quests</artifactId>\n</project>\n", "pom.xml", 1, 0),
         ("setup-cfg-maintainer-turkish-ok", "[metadata]\nmaintainer = I\u015f\u0131l A\u011fao\u011flu\ndescription =\n"
          "    s\u0131f\u0131r ve \u0131\u015f\u0131k\n", "setup.cfg", 0, 3),
@@ -4169,8 +4701,41 @@ def self_test():
          "docker-compose.yml", 1, 0),
         ("action-input-default-turkish-ok", "inputs:\n  who:\n    description: Ki\u015fi\n    default: \"I\u015f\u0131l\"\n",
          "action.yml", 0, 1),
-        ("compose-label-list-turkish-ok", "services:\n  web:\n    labels:\n      - \"a\u00e7\u0131klama=\u00d6n y\u00fcz\"\n",
-         "docker-compose.yml", 0, 1),
+        ("compose-label-list-turkish-ok", "services:\n  web:\n    labels:\n      - \"description=On y"
+         + chr(0xFC) + "z tamamland" + chr(0x131) + "\"\n", "docker-compose.yml", 0, 1),
+        ("compose-label-map-text-ok", "services:\n  app:\n    labels:\n      com.example.description: Yaz\u0131l\u0131m kullan\u0131c\u0131s\u0131\n",
+         "compose.yaml", 0, 2),
+        ("compose-label-map-key-exact", "services:\n  app:\n    labels:\n      c\u043em.example.description: safe\n",
+         "compose.yaml", 1, 0),
+        ("compose-environment-flow-map-text", "services:\n  app:\n    environment: {GREETING: \"I" + chr(0x15F)
+         + chr(0x131) + "l\"}\n", "compose.yaml", 0, 1),
+        ("compose-label-flow-map-text", "services:\n  app:\n    labels: {description: \"I" + chr(0x15F)
+         + chr(0x131) + "l\"}\n", "docker-compose.yml", 0, 1),
+        ("compose-environment-flow-list-text", "services:\n  app:\n    environment: [\"GREETING=I" + chr(0x15F)
+         + chr(0x131) + "l\"]\n", "compose.yaml", 0, 1),
+        ("compose-environment-flow-list-key-exact", "services:\n  app:\n    environment: [\"GREET"
+         + chr(0x131) + "NG=safe\"]\n", "compose.yaml", 1, 0),
+        ("compose-label-flow-list-text", "services:\n  app:\n    labels: [\"description=I"
+         + chr(0x131) + "sil\"]\n", "compose.yaml", 0, 1),
+        ("compose-label-flow-list-key-exact", "services:\n  app:\n    labels: [descr"
+         + chr(0x131) + "ption=safe]\n", "compose.yaml", 1, 0),
+        ("compose-env-flow-dq-escape", "services:\n  app:\n    environment: [\"GREETING=Merhaba \\\"I"
+         + chr(0x15F) + chr(0x131) + "l\\\"\"]\n", "compose.yaml", 0, 1),
+        ("compose-env-flow-sq-escape", "services:\n  app:\n    environment: ['GREETING=Merhaba ''I"
+         + chr(0x15F) + chr(0x131) + "l''']\n", "compose.yaml", 0, 1),
+        ("compose-label-flow-dq-escape", "services:\n  app:\n    labels: [\"description=Merhaba \\\"I"
+         + chr(0x15F) + chr(0x131) + "l\\\"\"]\n", "compose.yaml", 0, 1),
+        ("compose-label-flow-sq-escape", "services:\n  app:\n    labels: ['description=Merhaba ''I"
+         + chr(0x15F) + chr(0x131) + "l''']\n", "compose.yaml", 0, 1),
+        ("compose-flow-escaped-key-exact", "services:\n  app:\n    labels: [\"descr"
+         + chr(0x131) + "ption=Merhaba \\\"I" + chr(0x15F) + chr(0x131) + "l\\\"\"]\n",
+         "compose.yaml", 1, 1),
+        ("compose-label-block-list-text", "services:\n  app:\n    labels:\n      - description=I"
+         + chr(0x131) + "sil\n", "compose.yaml", 0, 1),
+        ("compose-label-block-list-key-exact", "services:\n  app:\n    labels:\n      - \"descr"
+         + chr(0x131) + "ption=safe\"\n", "compose.yaml", 1, 0),
+        ("compose-label-list-no-equal-exact", "services:\n  app:\n    labels:\n      - \"descr"
+         + chr(0x131) + "ption\"\n", "compose.yaml", 1, 0),
         ("pom-project-url-turkish-ok", "<project><url>https://example.com/\u0131\u015f\u0131k</url></project>\n", "pom.xml", 0, 1),
         ("pom-repository-url-lookalike", "<project><repositories><repository><url>https://r\u0435po.com/</url>"
          "</repository></repositories></project>\n", "pom.xml", 1, 0),
@@ -4178,6 +4743,10 @@ def self_test():
         ("turkish-snake-case-twin-ok", "def kullanici_getir():\n    pass\n# Kullan\u0131c\u0131y\u0131 getir\n"
          "kullan\u0131c\u0131 = kullanici_getir()\n", "x.py", 0, 2),
         ("host-file-extension-ok", "f = \"\u0441\u043e\u0440.md\"\ng = \"\u0420\u0435\u0441\u0443\u0440\u0441.json\"\n", "x.py", 0, 2),
+        ("host-common-file-suffixes-ok", "See p" + chr(0x430) + "ypal.docx, p" + chr(0x430) + "ypal.xlsx, and p" + chr(0x430) + "ypal.vue.\n",
+         "x.txt", 0, 3),
+        ("host-real-tlds-still-exact", "See p" + chr(0x430) + "ypal.app, p" + chr(0x430) + "ypal.dev, and p" + chr(0x430) + "ypal.io.\n",
+         "x.txt", 3, 0),
         ("host-russian-word-idn-tld-ok", "URL = \"https://\u0441\u043e\u043a.\u0440\u0444/\"\n", "x.py", 0, 0),
         ("turkish-shell-argument-ok", "echo Kurulum tamamland\u0131\n", "x.sh", 0, 1),
         ("turkish-dockerfile-arg-ok", "FROM alpine\nRUN echo Kullan\u0131c\u0131\n", "Dockerfile", 0, 1),
@@ -4201,7 +4770,17 @@ def self_test():
         ("curly-quotes-in-comment-ok", "# say \u201cbye\u201d  # the\n", "x.py", 0, 2),
         ("c-string-table-elements-ok", "const char *bad[] = {\"\\xe2\",  /* truncated */  \"\\x80\", \"\\x8b\"};\n", "x.c", 0, 0),
         ("go-string-list-elements-ok", "var bad = []string{\"\\xe2\", \"\\x80\", \"\\x8b\"}\n", "x.go", 0, 0),
+        ("js-byte-array-elements-ok", "const chunks = [\"\\xe2\", \"\\x80\", \"\\x8b\"];\n", "x.js", 0, 0),
+        ("mjs-byte-array-elements-ok", "const chunks = [\"\\xe2\", \"\\x80\", \"\\x8b\"];\n", "x.mjs", 0, 0),
+        ("ts-byte-array-elements-ok", "const chunks = [\"\\xe2\", \"\\x80\", \"\\x8b\"];\n", "x.ts", 0, 0),
+        ("rust-byte-array-elements-ok", "let chunks = [b\"\\xe2\", b\"\\x80\", b\"\\x8b\"];\n", "x.rs", 0, 0),
+        ("js-byte-array-join", "const s = [\"\\xe2\", \"\\x80\", \"\\x8b\"].join(\"\");\n", "x.js", 1, 0),
+        ("js-buffer-concat", "const s = Buffer.concat([Buffer.from(\"\\xe2\"), Buffer.from(\"\\x80\"), Buffer.from(\"\\x8b\")]);\n",
+         "x.js", 1, 0),
+        ("rust-byte-concat", "let s = concat!(\"\\xe2\", \"\\x80\", \"\\x8b\");\n", "x.rs", 1, 0),
         ("c-adjacent-literals-join", "const char *s = \"\\xe2\" \"\\x80\" \"\\x8b\";\n", "x.c", 1, 0),
+        ("cpp-plus-literals-join", "std::string(\"\\xe2\") + \"\\x80\" + \"\\x8b\";\n", "x.cpp", 1, 0),
+        ("cpp-comma-literals-ok", "const char *chunks[] = {\"\\xe2\", \"\\x80\", \"\\x8b\"};\n", "x.cpp", 0, 0),
         ("py-bytes-join-list", "s = b''.join([b\"\\xe2\", b\"\\x80\", b\"\\x8b\"]).decode()\n", "x.py", 1, 0),
         ("hbs-block-comment-quotes", "{{!-- t(\u201cnav.home\u201d) --}}\n<p>{{title}}</p>\n", "x.hbs", 0, 2),
         ("hbs-short-comment-quotes", "{{! t(\u201cnav.home\u201d) }}\n", "x.hbs", 0, 2),

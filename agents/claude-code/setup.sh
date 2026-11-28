@@ -84,7 +84,8 @@ if os.path.lexists(path):
     try:
         with open(path, encoding="utf-8-sig") as fh:
             raw = fh.read()
-        cfg = json.loads(raw, object_pairs_hook=unique_keys, parse_float=Number) if raw.strip() else {}
+        cfg = json.loads(raw, object_pairs_hook=unique_keys, parse_float=Number,
+                         parse_int=Number) if raw.strip() else {}
     except Duplicate as exc:
         leave("the key %s appears more than once in one object, and only the last would be kept"
               % json.dumps(exc.args[0]))

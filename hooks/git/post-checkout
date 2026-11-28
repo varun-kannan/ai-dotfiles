@@ -1,4 +1,5 @@
 #!/bin/bash
+# ai-dotfiles hook: post-checkout
 # ai-dotfiles-hook: a hook that was here before is kept as <name>.local and runs first.
 # Keeps the project harness current after a clone, checkout or merge. It runs in the
 # background with a fixed system PATH from /, and never blocks or fails the git command,

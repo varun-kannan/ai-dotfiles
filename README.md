@@ -132,7 +132,7 @@ To make the loader select a skill, add it to `config/skill-metadata.json` and
 |---|---|---|
 | Rules files | Every configured agent | Instruction; usually followed |
 | Claude Code write hooks | Files Claude Code writes with its Write, Edit and NotebookEdit tools (not through the Bash tool) | Blocks the write |
-| git `pre-commit` | New commits and `git am` patches, from any tool | Blocks the commit |
+| git `pre-commit` | Ordinary commits and `git am` patches, from any tool; see [installation limits](INSTALL.md#where-each-layer-lets-things-through) | Blocks the commit |
 | git `commit-msg` | Commit messages | Removes attribution |
 
 Chat replies are covered by instructions alone. Tested against fresh sessions,

@@ -1,4 +1,5 @@
 #!/bin/bash
+# ai-dotfiles hook: commit-msg
 # ai-dotfiles-hook: a hook that was here before is kept as <name>.local and runs first;
 # if it fails, so does this one.
 # Only absolute PATH entries: an empty or relative one could pick up a program from the repo.

@@ -106,7 +106,7 @@ keeps its link.
 |---|---|
 | `commit-msg` | Strips AI attribution trailers |
 | `pre-commit` | Blocks hygiene violations in the staged content |
-| `pre-applypatch`, `applypatch-msg` | During `git am`, hand each patch to our `pre-commit` and its message to our `commit-msg`; they do nothing when the hook beside them is not ours or is a symlink |
+| `pre-applypatch`, `applypatch-msg` | During `git am`, hand each patch to our type-marked `pre-commit` and its message to our type-marked `commit-msg`; they do nothing when the hook beside them has the wrong type, is not ours, or is a symlink |
 | `post-checkout`, `post-merge` | Keep a project's setup current; never fail the git command |
 
 A hook of yours with the same name is kept as `<hook>.local` and runs first when it
@@ -220,8 +220,15 @@ Both hooks use one scanner, `bin/content-hygiene`. It sorts a file into code, pr
 their extension (`package.json`, `*requirements*.txt`, `requirements/*.txt`, `constraints*.txt`,
 `pyproject.toml`, `setup.cfg`, `pom.xml`, `environment.yml`, `pnpm-workspace.yaml`, `renovate.json`,
 Compose files and their overrides, `.github/workflows/*`, `.gitlab-ci.yml` and `.gitlab/**/*.yml`,
-`.travis.yml`), because a package name or a CI step must be exactly what it
-looks like.
+`.travis.yml`). In GitHub Actions, free text stays text in flow maps with bare, single-quoted or
+double-quoted keys, flow sequences and block scalars, including `env:`/`variables:` maps and
+concurrency. `${{ }}` expressions
+are always judged exactly, including expressions with quoted braces. A `with:` input for a
+repository, ref or path, any input with `version` in its name, and an input named
+`url`, `uri`, `host`, `hostname`, `endpoint`, `server` or `registry` must be exactly
+what it looks like. The same applies to keys ending in `-url`, `_url`, `-uri`, `_uri`,
+`-host`, `_host`, `-endpoint`, `_endpoint`, `-server`, `_server`, `-registry` or
+`_registry`, and to values that look like a URL or host.
 
 Blocked in every kind of file:
 
@@ -269,12 +276,13 @@ Blocked in code, a warning in prose and data, where they can be content:
   beside `p0`, is exempt), and a digit of another script
   inside a name with no letter of that script (a Bengali `০` in `t০ken`). In prose and data, words made only of another script's letters are
   that language and are not reported.
-  A host name (after `://`, or a dotted name ending in a country-code or common generic
-  top-level domain, `user@host` included) with such a word in it is blocked everywhere, in
+  A host name (after `://`, after `user@`, or a bare dotted name whose last label is 2-24
+  ASCII letters and is not a common file extension, when no `(` or method chain follows)
+  with such a word in it is blocked everywhere, in
   prose, strings, comments and shell arguments too, unless a good share of the letters of
   that label, judged on its own, are real letters of one script (a Russian domain). In code
-  outside strings and comments only a name after `://` counts as a host (`x.item()` is a
-  member, `W@x` an operator).
+  outside strings and comments, only `://` and the dotted `user@host` shape mark a host.
+  Compact or spaced matrix expressions (`W@x`, `A @ B`) and line-start decorators do not.
   Julia, Lean, Agda, Haskell and Idris keep mathematical letter styles distinct, so
   their conventional mathematical names are not folded to ASCII (monospace and
   sans-serif letters, which look like ASCII, are still blocked, and so is a multi-letter
@@ -397,8 +405,9 @@ references use it. In the write hook only, these are also exempt: the forensics
 references named `skills/ai-content-forensics/reference/forensics-*` (other files in that
 folder are checked), the hygiene tooling's own
 files (`content-hygiene`, `pre-write-guard.sh`, `post-write-audit.sh`, matched by file
-name only under the shared folder or `~/.claude/hooks`, where they are installed), and anything under a `.trash-preview/` folder. A path containing `..` gets no
-exemption.
+name only where they are installed), and anything under a `.trash-preview/` folder. These
+exemptions apply only inside the resolved shared folder or `~/.claude/hooks`; similarly named
+sibling folders are checked. A path containing `..` gets no exemption.
 
 ---
 
@@ -472,7 +481,7 @@ The prompt hook's model note and task note go through the decision engine. Turn 
 
 ```bash
 python3 ~/.ai-rules/bin/context-manager.py --self-test
-python3 ~/.claude/hooks/prompt-route.py --self-test
+test -x ~/.claude/hooks/prompt-route.py && python3 ~/.claude/hooks/prompt-route.py --self-test
 python3 -m unittest discover -s tests
 ```
 

@@ -1,4 +1,5 @@
 #!/bin/bash
+# ai-dotfiles hook: pre-applypatch
 # ai-dotfiles-hook: a hook that was here before is kept as <name>.local and runs first;
 # if it fails, so does this one.
 # Only absolute PATH entries: an empty or relative one could pick up a program from the repo.
@@ -11,6 +12,6 @@ if [ -x "$0.local" ]; then "$0.local" "$@" || exit $?; fi
 d="$(dirname "$0")"
 # Only our own pre-commit, by the header install.sh looks for: git never runs pre-commit during
 # am, so a pre-commit of yours (or a symlink to who knows what) would be running out of turn.
-[ -x "$d/pre-commit" ] && [ ! -L "$d/pre-commit" ] || exit 0
-head -n 6 "$d/pre-commit" 2>/dev/null | grep -qE '^# (ai-dotfiles-hook:|strip-ai-attribution - git commit-msg hook|pre-commit - universal output-hygiene gate|Keeps the project harness current)' || exit 0
+[ -f "$d/pre-commit" ] && [ -x "$d/pre-commit" ] && [ ! -L "$d/pre-commit" ] || exit 0
+head -n 6 "$d/pre-commit" 2>/dev/null | grep -q '^# ai-dotfiles hook: pre-commit$' || exit 0
 AI_HYGIENE_AM=1 exec "$d/pre-commit"

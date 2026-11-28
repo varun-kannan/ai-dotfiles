@@ -24,7 +24,9 @@ GOT_LOCK=0
 LOCK_ID=""
 FAILED_AGENTS=""
 FAILED_STEPS=""
-OURS='^# (ai-dotfiles-hook:|strip-ai-attribution - git commit-msg hook|pre-commit - universal output-hygiene gate|Keeps the project harness current)'
+# New hooks have a typed marker; the remaining alternatives identify hooks from older installs.
+TYPED_HOOK='^# ai-dotfiles hook: (applypatch-msg|commit-msg|post-checkout|post-merge|pre-applypatch|pre-commit)$'
+LEGACY_HOOK='^# (ai-dotfiles-hook:|strip-ai-attribution - git commit-msg hook|pre-commit - universal output-hygiene gate|Keeps the project harness current)'
 LINKED="bin engine rules config skills shell agents RULES.md"
 # Only these are copied from bin/, so a stray file there (a patch reject, an editor backup) never
 # ships as a command.
@@ -437,7 +439,12 @@ install_agents() {
 # symlinked hook is never written through: it may point outside the repo.
 # Returns 0 installed, 3 left alone, 1 failed.
 is_ours() {  # $1 file: one of our hooks, by the header lines only we write
-  head -n 6 "$1" 2>/dev/null | grep -qE "$OURS"
+  local header name
+  header="$(head -n 6 "$1" 2>/dev/null)"
+  name="$(basename "$1")"
+  printf '%s\n' "$header" | grep -qxF "# ai-dotfiles hook: $name" && return 0
+  printf '%s\n' "$header" | grep -qE "$TYPED_HOOK" && return 1
+  printf '%s\n' "$header" | grep -qE "$LEGACY_HOOK"
 }
 
 put_hook() {  # $1 source hook, $2 destination dir

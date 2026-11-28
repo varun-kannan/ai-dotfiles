@@ -434,22 +434,28 @@ if not whole and edits and not late:
     elif in_place == NOFIT:
         in_place = None                   # Claude Code refuses it: its new text is scanned on its own
 
-# Never police the hygiene tooling itself or the forensics reference material: both quote the
-# characters scanned for. The tooling is matched by file name, the reference files by their
-# folder. A path with ".." or "." segments gets no exemption, since it can name any file. The
-# tooling is exempt only where it is installed: a file of that name elsewhere is checked.
+# Never police the installed hygiene tooling, forensics reference material, or trash previews:
+# they quote the characters scanned for. A path with ".." or "." segments gets no exemption,
+# since it can name any file. Every exemption is limited to an installed root.
 segments = path.split("/")
-TOOL_HOMES = tuple(os.path.realpath(d) + "/" for d in (
-    os.environ.get("AI_RULES_HOME") or os.path.expanduser("~/.ai-rules"), os.path.expanduser("~/.claude/hooks")))
+RULES_ROOT = os.path.realpath(os.environ.get("AI_RULES_HOME") or os.path.expanduser("~/.ai-rules"))
+HOOKS_ROOT = os.path.realpath(os.path.expanduser("~/.claude/hooks"))
+SKILLS_ROOT = os.path.realpath(os.path.expanduser("~/.claude/skills"))
 
 
 def exempt(p):
     parts = p.split("/")
     if ".." in parts or "." in parts:
         return False
-    return "/skills/ai-content-forensics/reference/forensics-" in p or "/.trash-preview/" in p \
-        or (parts[-1] in ("content-hygiene", "pre-write-guard.sh", "post-write-audit.sh")
-            and os.path.realpath(p).startswith(TOOL_HOMES))
+    resolved = os.path.realpath(p)
+    roots = (RULES_ROOT, HOOKS_ROOT, SKILLS_ROOT) if "/skills/ai-content-forensics/reference/forensics-" in resolved \
+        else (RULES_ROOT, HOOKS_ROOT)
+    if not any(resolved == root or resolved.startswith(root + "/") for root in roots):
+        return False
+    resolved_parts = resolved.split("/")
+    return "/skills/ai-content-forensics/reference/forensics-" in resolved \
+        or "/.trash-preview/" in resolved \
+        or resolved_parts[-1] in ("content-hygiene", "pre-write-guard.sh", "post-write-audit.sh")
 
 
 # A symlink is exempt only when what it points to is too: a link named content-hygiene does not

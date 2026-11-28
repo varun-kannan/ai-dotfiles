@@ -25,6 +25,7 @@ class CreationInTime(Guard):
                                                        {"old_string": "a" * 50000 + "ba", "new_string": "a"}]})
         took = time.monotonic() - t
         self.assertEqual(r.returncode, 2, r.stderr[-1000:])
+        self.assertIn("edit could not be placed in the file in time", r.stderr)
         self.assertLess(took, 11, "decided in %.1f s" % took)
 
 

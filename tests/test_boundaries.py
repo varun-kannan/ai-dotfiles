@@ -513,10 +513,17 @@ class BackgroundJobs(HookCase):
     def test_no_install_while_another_one_holds_the_lock(self):
         self.new_commit()
         fake = make(self.tmp / "running") / "install.sh"
-        fake.write_text("#!/bin/bash\nsleep 30\n")
+        fake.write_text("#!/bin/bash\nsleep 30 &\nwait\n")
         installer = subprocess.Popen(["/bin/bash", str(fake)])
         try:
-            os.symlink(str(installer.pid), self.shared / ".install.lock")
+            try:
+                started = subprocess.run(["/bin/ps", "-o", "lstart=", "-p", str(installer.pid)],
+                                         capture_output=True, text=True, check=True).stdout
+            except (PermissionError, OSError, subprocess.CalledProcessError):
+                self.skipTest("ps process inspection is unavailable in this sandbox")
+            started = "".join(started.split())
+            self.assertTrue(started, "the live lock holder has a process start time")
+            os.symlink("%d:%s" % (installer.pid, started), self.shared / ".install.lock")
             self.start()
             time.sleep(0.7)
             self.assertFalse(self.marker.exists(), "an installer is running")
